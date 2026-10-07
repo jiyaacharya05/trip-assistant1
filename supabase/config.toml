@@ -1,0 +1,4 @@
+[functions.myra-chat]
+# This endpoint accepts guest chat requests; it verifies any supplied user JWT
+# itself and requires authentication for save/book actions.
+verify_jwt = false
