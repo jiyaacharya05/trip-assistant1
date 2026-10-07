@@ -86,13 +86,17 @@ function localDecision(query){
     {category:'Flights',re:/\b(flights?|airfare|air tickets?)\b/i}
   ];
   const matched=categories.find(x=>x.re.test(q));
+  const categoryAtStart=/^\s*(?:flights?|airfare|air tickets?|hotels?|stays?|rooms?|accommodation|resorts?|villas?|homestays?|holiday packages?|tour packages?|vacation packages?|packages?|tours?|tourist places?|attractions?|things to do|places to visit|sightseeing|trains?|rail tickets?|buses?|bus tickets?|cabs?|taxis?|car rentals?)\b/i.test(q);
+  const searchIntent=/\b(show|find|search|look(?:ing)? for|browse|compare|open|list|options|results|recommend|suggest|book me|find me|near me|i (?:want|need))\b/i.test(q)
+    || categoryAtStart
+    || Boolean(matched&&/\b(from|to|in|at|near)\b/i.test(q)&&!/^(?:what|how|why|are|is|do|does|can|will|should|tell me|explain)\b/i.test(q));
   const destinationMatch=q.match(/\b(?:in|at|to|near|for)\s+([a-z][a-z .'-]{1,35}?)(?=\s+(?:under|below|around|for|from|on|between|with|this|next)\b|[,.!?]|$)/i);
-  if(route && (!matched || matched.category==='Flights' || matched.category==='Trains' || matched.category==='Buses' || matched.category==='Cabs')){
+  if(route && searchIntent && (!matched || matched.category==='Flights' || matched.category==='Trains' || matched.category==='Buses' || matched.category==='Cabs')){
     const category=matched?.category||'Flights',from=title(route[1]),to=title(route[2]);
     const sort=/\b(top rated|best rated|highest rated|recommended)\b/i.test(q)?'rating':/\b(fastest|quickest|non.?stop)\b/i.test(q)?'fastest':'low';
     return category==='Flights'?{reply:`I’ve found flights from ${from} to ${to}. Compare the sample fares and timings below.`,action:'route',payload:{from,to,sort}}:{reply:`I’m opening ${category.toLowerCase()} from ${from} to ${to}. These are sample results for comparison.`,action:'navigate',payload:{category,from,to,sort}};
   }
-  if(matched){
+  if(matched&&searchIntent){
     const category=matched.category;
     const captured=destinationMatch?.[1]?.trim();
     const destination=captured&&/^(me|here|near me)$/i.test(captured)?(siteContext.to||context.to||''):(captured?title(captured):(siteContext.to||context.to||''));
