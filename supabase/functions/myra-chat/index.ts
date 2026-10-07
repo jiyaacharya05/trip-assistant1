@@ -314,7 +314,7 @@ Deno.serve(async (req) => {
       }
       const webhook = Deno.env.get('N8N_WEBHOOK_URL');
       if (webhook) {
-        const task = fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itinerary_id: itinerary.id, user_id: userId, persona, destination: trip.destination, dates: { start_date: trip.start_date, end_date: trip.end_date }, budget: trip.budget_inr, itinerary_summary: summary }) }).then(r => { if (!r.ok) console.warn('n8n webhook returned', r.status); }).catch(e => console.warn('n8n webhook failed', e));
+        const task = fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itinerary_id: itinerary.id, user_id: userId, persona, destination: trip.destination, dates: { start_date: trip.start_date, end_date: trip.end_date }, budget: trip.budget_inr, itinerary_summary: summary, user_name: profile?.name || null, user_email: profile?.email || null }) }).then(r => { if (!r.ok) console.warn('n8n webhook returned', r.status); }).catch(e => console.warn('n8n webhook failed', e));
         // @ts-ignore Supabase Edge Runtime keeps this task alive without delaying the user response.
         if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(task);
       }
