@@ -4,10 +4,9 @@ Independent travel planning demo with Flights, Hotels, Villas & Homestays, Holid
 
 ## Run locally
 
-The ready-to-serve website is in `dist/`:
+The website is served from the repository root. All images are in `assets/`.
 
 ```bash
-cd dist
 python3 -m http.server 8000
 ```
 
