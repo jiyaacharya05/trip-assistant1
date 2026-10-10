@@ -162,6 +162,15 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
   function questionFor(field,t=trip){if(field==='destination_dates'){if(!t.destination)return `Where would you like to go${t.duration_days?` for your ${t.duration_days}-day trip`:''}, and what are your travel dates? (DD MMM YYYY)`;if(t.duration_days&&!t.start_date)return `What date should your ${t.duration_days}-day trip to ${t.destination} start? (DD MMM YYYY)`;if(t.start_date&&!t.end_date)return `What date will you return from ${t.destination}? (DD MMM YYYY)`;return `What are your start and return dates for ${t.destination}? (DD MMM YYYY)`}return({budget_inr:'What budget should I plan within, in ₹?',travellers_type:'Who’s travelling?',interests:'What do you enjoy—nature, food, temples, beaches, or something else?',pace:'What pace feels right?'})[field]||'What else should I know to plan this trip?'}
   function normalizePlanCosts(generated,tripData){const days=Array.isArray(generated.days)?generated.days:[],stayName=days.find(d=>d.stay)?.stay,stay=(generated.hotels||[]).find(h=>h.name===stayName),nights=Math.max(0,days.length-1),nightly=Number(stay?.price_per_night_inr||0),stayTotal=nightly*nights,budget=Number(tripData.budget_inr||0);if(stay&&stayTotal>budget)return{error:`The catalogue stay costs about ₹${stayTotal.toLocaleString('en-IN')} for ${nights} night(s), above your ₹${budget.toLocaleString('en-IN')} budget. Please raise the budget or shorten the trip.`};const base=days.map((_,i)=>i<nights?nightly:0),raw=days.map((d,i)=>Math.max(base[i],Number(d.est_cost_inr)||0)),rawTotal=raw.reduce((a,b)=>a+b,0),target=Math.min(budget,Math.max(stayTotal,rawTotal||stayTotal)),extras=raw.map((v,i)=>Math.max(0,v-base[i])),extrasTotal=extras.reduce((a,b)=>a+b,0),weights=extrasTotal?extras:days.map(d=>Math.max(1,(d.activities||[]).length)),weightTotal=weights.reduce((a,b)=>a+b,0),extraBudget=Math.max(0,target-stayTotal),normalized=days.map((d,i)=>({...d,est_cost_inr:base[i]+(i===days.length-1?extraBudget-weights.slice(0,i).reduce((sum,w)=>sum+Math.floor(extraBudget*w/weightTotal),0):Math.floor(extraBudget*weights[i]/weightTotal))}));return{plan:{...generated,days:normalized,total_cost_inr:normalized.reduce((sum,d)=>sum+d.est_cost_inr,0)}}}
   function chips(options){const box=add('response-actions',options.map(x=>`<button type="button" data-value="${esc(x.value)}">${esc(x.label)}</button>`).join(''));box.querySelectorAll('button').forEach(b=>b.onclick=()=>ask(b.dataset.value));return box}
+  /* Backend failures: show the real reason and a Try again button, using the
+     existing chat styles. Myra never shows a made-up answer when the backend fails. */
+  function backendError(err,retry){
+    const message=err&&err.name==='MyraBackendError'?err.message:'Myra could not get a reply from the server. Please try again.';
+    const label=add('myra-label','Myra<sup>✦</sup>');
+    const note=add('answer',`<p>${esc(message)}</p>`);
+    const actions=add('response-actions','<button type="button" data-retry>Try again</button>');
+    actions.querySelector('[data-retry]').onclick=()=>{label.remove();note.remove();actions.remove();retry()};
+  }
   function addWhy(status,explanation){
     if(status==='Rejected')return '';
     return `<div class="notice" style="margin:12px 0"><b>Why this plan</b><br>${status==='Approved'?esc(explanation||''):'Being reviewed by our team'}</div>`;
@@ -198,7 +207,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
       if(data.fallback){add('answer',`<p>${esc(data.reply)}</p>`);chips([{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'},{label:'Try again',value:'plan a trip'}]);return}
       if(data.no_catalogue){add('answer',`<p>${esc(data.reply)}</p>`);if(data.hotels?.length)add('answer',`<p>Catalogue stays: ${data.hotels.map(h=>`${esc(h.name)} (${esc(h.area)})`).join(' · ')}</p>`);return}if(data.budget_too_low){add('answer',`<p>${esc(data.reply)}</p>`);return}
       const checked=normalizePlanCosts({...data.plan,hotels:data.hotels},trip);if(checked.error){add('answer',`<p>${esc(checked.error)}</p>`);return}plan=checked.plan;planDirty=true;renderPlan(plan);
-    }catch(e){typing.remove();add('answer',`<p>Myra is having trouble right now, here are some quick options.</p>`);chips([{label:'Cheapest flights',value:'cheapest flights'},{label:'Show fastest flights',value:'fastest flights'},{label:'Hotels near me',value:'hotels near me'}])}
+    }catch(e){typing.remove();backendError(e,()=>makePlan(changeRequest))}
   }
   async function ask(query){
     query=String(query||'').trim().slice(0,500);if(!query)return;openMessages();input.value='';append('query',esc(query));
@@ -232,9 +241,12 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
         return;
       }
     }
+    await backendTurn(query,planningIntent);
+  }
+  async function backendTurn(query,planningIntent){
     const api=parent.tripBackend;
     const locallyUpdatedTrip=localTripUpdate(query,trip,nextQuestion);
-    if(!api?.configured){if(planningIntent){trip=locallyUpdatedTrip;nextQuestion=firstMissing(trip);add('answer',`<p>I’ve got your ${esc(trip.duration_days?`${trip.duration_days}-day `:'')}${esc(trip.travellers_type||'')} trip to <b>${esc(trip.destination||'')}</b>${trip.budget_inr?` with a budget of <b>₹${Number(trip.budget_inr).toLocaleString('en-IN')}</b>`:''}.</p><p>${esc(questionFor(nextQuestion,trip))}</p>`);return;}add('answer',`<p>${esc(localSiteAnswer(query))}</p>`);chips([{label:'Plan a trip',value:'Plan a trip'},{label:'Cheapest flights',value:'Cheapest flights'},{label:'Hotels near me',value:'Hotels near me'}]);return;}
+    if(!api?.configured){backendError({name:'MyraBackendError',message:'Myra’s AI is not connected: the page could not load its Supabase configuration (supabase-config.js) or the Supabase library. Refresh the page and try again.'},()=>backendTurn(query,planningIntent));return;}
     const wait=add('typing',planningIntent?'Myra is planning with you…':'Myra is checking your question…');
     try{
       if(!planningIntent){
@@ -257,7 +269,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
       nextQuestion=missing;add('answer',`<p>${esc(questionFor(missing))}</p>`);
       if(missing==='travellers_type')chips([{label:'Solo',value:'Solo'},{label:'Couple',value:'Couple'},{label:'Family (kids/elders)',value:'Family with kids or elders'},{label:'Friends group',value:'Friends'}]);
       if(missing==='pace')chips([{label:'Relaxed',value:'Relaxed pace'},{label:'Normal',value:'Normal pace'},{label:'Packed',value:'Packed pace'}]);
-    }catch(e){wait.remove();if(planningIntent){trip=locallyUpdatedTrip;nextQuestion=firstMissing(trip);if(nextQuestion){add('answer',`<p>I’ve got your ${esc(trip.duration_days?`${trip.duration_days}-day `:'')}${esc(trip.travellers_type||'')} trip to <b>${esc(trip.destination||'')}</b>${trip.budget_inr?` with a budget of <b>₹${Number(trip.budget_inr).toLocaleString('en-IN')}</b>`:''}.</p><p>${esc(questionFor(nextQuestion,trip))}</p>`);return;}}else{add('myra-label','Myra<sup>✦</sup>');add('answer','<p>Myra is having trouble right now, here are some quick options.</p>');chips([{label:'Plan a trip',value:'Plan a trip'},{label:'Cheapest flights',value:'Cheapest flights'},{label:'Hotels near me',value:'Hotels near me'}]);return;}add('answer','<p>Myra is having trouble right now, here are some quick options.</p>');chips([{label:'Plan a trip',value:'plan a trip'},{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'},{label:'Baggage rules',value:'baggage'}]);}
+    }catch(e){wait.remove();backendError(e,()=>backendTurn(query,planningIntent));}
   }
   function readVisibleFlights(){
     try{return [...parent.document.querySelectorAll('#resultList .result-card')].slice(0,5).map(card=>{const route=card.querySelector('.route'),parts=route?[...route.children]:[],priceLabel=card.querySelector('.price h3')?.innerText?.trim()||'',name=card.querySelector('h3')?.innerText?.trim()||'',time=parts[0]?.querySelector('b')?.innerText?.trim()||'',arrival=parts[2]?.querySelector('b')?.innerText?.trim()||'',middle=parts[1]?.innerText||'',stops=/non.?stop/i.test(middle)?0:1;return{name,time,arrival,stops,price_label:priceLabel,duration:middle.match(/\d+h\s*\d*m/i)?.[0]||'2h 45m'}}).filter(f=>f.name&&f.price_label)}catch{return[]}

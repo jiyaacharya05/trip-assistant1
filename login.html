@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login or Create Account · Trip Assistant</title>
+<link href="assets/fonts.css" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:#f2f5f9;color:#182a3c;font:14px Lato,Arial,sans-serif}
+.auth-page{display:grid;grid-template-columns:minmax(320px,.95fr) minmax(380px,1.05fr);min-height:100vh;min-height:100dvh}
+/* Left visual panel: the photo is a real <img> that always covers the whole panel. */
+.auth-visual{position:relative;overflow:hidden;color:#fff;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:space-between;padding:40px 44px}
+.auth-photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 55%;z-index:0}
+.auth-overlay{position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,#061b2d66 0%,#061b2d14 34%,#061b2d26 55%,#071d32e6 100%)}
+.auth-brand,.auth-caption{position:relative;z-index:2}
+.auth-brand{font-size:27px;font-weight:800;letter-spacing:-1.2px;text-shadow:0 1px 10px #0006}
+.auth-caption>span{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#f7cf9e}
+.auth-caption h2{font-size:42px;line-height:1.06;letter-spacing:-.9px;margin:10px 0 12px;text-shadow:0 2px 18px #0007}
+.auth-caption p{font-size:16px;line-height:1.5;color:#ffffffe6;margin:0;max-width:340px}
+.auth-main{display:flex;flex-direction:column;justify-content:center;padding:40px 56px;background:#fff}
+.auth-card{width:100%;max-width:440px;margin:0 auto}
+.back-link{display:inline-flex;align-items:center;gap:6px;color:#167bc2;font-weight:700;font-size:14px;text-decoration:none;margin-bottom:34px}
+.back-link:hover{text-decoration:underline}
+.kicker{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#1686db}
+.auth-card h1{color:#182a3c;font-size:32px;line-height:1.15;letter-spacing:-.6px;margin:11px 0 10px}
+.intro{font-size:15px;line-height:1.6;color:#637184;margin:0 0 24px}
+.status{display:none;padding:11px 13px;border-radius:9px;font-size:14px;line-height:1.45;margin:0 0 18px}
+.status.show{display:block}
+.status.info{background:#eef7ff;color:#1769a6}
+.status.success{background:#ebf8f1;color:#17734a}
+.status.error{background:#fdeeee;color:#a3302f}
+.google{width:100%;height:48px;border:1px solid #d7dee7;border-radius:8px;background:#fff;color:#26394d;font:inherit;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:11px;cursor:pointer;transition:border-color .18s,background .18s}
+.google:hover{border-color:#97b7d5;background:#f9fcff}
+.google:disabled{opacity:.6;cursor:wait}
+.google-g{font-family:Arial,sans-serif;font-weight:800;font-size:19px;color:#4285f4}
+.divider{display:flex;align-items:center;gap:12px;color:#8b97a5;font-size:10px;font-weight:800;letter-spacing:1px;margin:22px 0}
+.divider:before,.divider:after{content:'';height:1px;background:#e3e8ee;flex:1}
+form{display:flex;flex-direction:column;gap:9px}
+label{font-size:13px;font-weight:700;color:#35465a;margin-top:3px}
+input{width:100%;height:48px;border:1px solid #d8dfe8;border-radius:8px;padding:0 14px;background:#fff;color:#182a3c;font:inherit;font-size:15px;outline:none;transition:border-color .18s,box-shadow .18s}
+input:focus{border-color:#1786d6;box-shadow:0 0 0 3px #1686db20}
+#authCode{font-size:24px;letter-spacing:10px;text-align:center;font-weight:700}
+.submit{height:48px;border:0;border-radius:8px;background:#1686db;color:#fff;font:inherit;font-size:14px;font-weight:800;cursor:pointer;margin-top:8px;transition:background .18s}
+.submit:hover{background:#0874c1}
+.submit:disabled{opacity:.65;cursor:wait}
+.actions{display:flex;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap}
+.link-btn{border:0;padding:5px 0;background:none;color:#167bc2;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.link-btn:disabled{color:#9aa4b0;cursor:default}
+.footnote{font-size:13px;line-height:1.55;color:#738091;margin:15px 0 0}
+.terms{font-size:11px;line-height:1.55;color:#9aa4b0;margin:19px 0 0}
+[hidden]{display:none!important}
+@media(max-width:820px){
+  .auth-page{grid-template-columns:1fr;min-height:0}
+  .auth-visual{min-height:38vh;min-height:38dvh;padding:24px 26px}
+  .auth-brand{font-size:22px}
+  .auth-caption h2{font-size:30px;margin:7px 0}
+  .auth-caption p{font-size:14px}
+  .auth-main{padding:26px 22px 40px}
+  .back-link{margin-bottom:22px}
+  .auth-card h1{font-size:27px}
+}
+</style>
+</head>
+<body>
+<div class="auth-page">
+  <aside class="auth-visual" aria-label="Sunset over the ocean">
+    <img class="auth-photo" src="assets/login-ocean-sunset.jpg" alt="" width="1200" height="798">
+    <div class="auth-overlay" aria-hidden="true"></div>
+    <div class="auth-brand">Trip Assistant</div>
+    <div class="auth-caption"><span>TRAVEL, YOUR WAY</span><h2>Find your<br>kind of getaway.</h2><p>Thoughtful trip ideas, saved in one place.</p></div>
+  </aside>
+  <main class="auth-main">
+    <div class="auth-card">
+      <a class="back-link" id="backLink" href="index.html">← Back to Search &amp; Trips</a>
+
+      <section id="stepStart">
+        <div class="kicker">WELCOME TO TRIP ASSISTANT</div>
+        <h1>Let’s get you going.</h1>
+        <p class="intro">Sign in or create an account to keep your trips together.</p>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+        <button class="google" id="googleBtn" type="button"><span class="google-g" aria-hidden="true">G</span><span>Continue with Google</span></button>
+        <div class="divider"><span>OR CONTINUE WITH EMAIL</span></div>
+        <form id="emailForm" novalidate>
+          <label for="authEmail">Email address</label>
+          <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required>
+          <button class="submit" id="sendBtn">Send me a 6-digit code</button>
+        </form>
+        <p class="footnote">New to Trip Assistant? Your account is created when you verify your email. No password or SMS needed.</p>
+        <p class="terms">By continuing, you agree to use Trip Assistant. Myra helps with your travel planning.</p>
+      </section>
+
+      <section id="stepCode" hidden>
+        <div class="kicker">ONE QUICK STEP</div>
+        <h1>Check your inbox.</h1>
+        <p class="intro">We sent a 6-digit code to <strong id="sentTo"></strong>. Enter it below to sign in or finish creating your account.</p>
+        <p class="status" id="codeStatus" role="status" aria-live="polite"></p>
+        <form id="codeForm" novalidate>
+          <label for="authCode">6-digit code</label>
+          <input id="authCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" required>
+          <button class="submit" id="verifyBtn">Verify and continue</button>
+        </form>
+        <div class="actions">
+          <button class="link-btn" id="resendBtn" type="button">Resend code</button>
+          <button class="link-btn" id="changeEmailBtn" type="button">Use another email</button>
+        </div>
+        <p class="footnote">Can’t find it? Check your spam folder. The code expires after a few minutes.</p>
+      </section>
+
+      <section id="stepDone" hidden>
+        <div class="kicker">YOU’RE SIGNED IN</div>
+        <h1 id="doneTitle">Welcome!</h1>
+        <p class="intro">Taking you back to where you were…</p>
+        <p class="status success show" id="doneStatus" role="status" aria-live="polite">Signed in successfully.</p>
+        <a class="submit" id="continueLink" href="index.html" style="display:flex;align-items:center;justify-content:center;text-decoration:none">Continue</a>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script src="login.js"></script>
+</body>
+</html>

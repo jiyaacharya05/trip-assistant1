@@ -5,7 +5,7 @@
   if (!configured || !window.supabase?.createClient) {
     if (status) status.hidden = false;
     window.tripBackend = { configured:false, getUser:()=>null, getProfile:()=>null, profile:null, async invoke(){throw new Error('Supabase is not configured yet. Set the project URL and anon key in supabase-config.js.')} };
-    window.login=()=>modal('Supabase setup required','<p>Add your Supabase project URL and anon key to <code>supabase-config.js</code>, then sign in with Google or an email code.</p>');
+    window.login=()=>{location.href='login.html?next='+encodeURIComponent(location.pathname+location.search+location.hash)};
     window.showTrips=()=>modal('My Trips','<p>Connect Supabase to save and load your trips.</p>');
     window.confirmBooking=()=>toast('Connect Supabase before saving a booking.');
     window.saveItem=()=>toast('Connect Supabase before saving wishlist items.');
@@ -16,21 +16,30 @@
   const client = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, { auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true} });
   let currentUser=null, profile=null, reviewChannel=null, wishItems=[],pendingHotelBooking=null;
   const anonName=()=>currentUser?.user_metadata?.full_name||currentUser?.user_metadata?.name||'';
+  /* Display name: Supabase profile name, then Google metadata, then the email prefix. */
+  const bestName=()=>[profile?.name,currentUser?.user_metadata?.full_name,currentUser?.user_metadata?.name,(currentUser?.email||'').split('@')[0]].map(v=>String(v||'').trim()).find(Boolean)||'';
+  const loginUrl=()=>'login.html?next='+encodeURIComponent(location.pathname+location.search+location.hash);
   const esc2=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const configError=()=>!configured;
   async function refreshProfile(){
     if(!currentUser){ profile=null; window.dispatchEvent(new CustomEvent('supabase-profile',{detail:{user:null,profile:null}})); return null; }
     const {data,error}=await client.from('profiles').select('*').eq('id',currentUser.id).maybeSingle();
     if(error) throw error;
-    profile=data||{id:currentUser.id,email:currentUser.email||'',name:anonName(),mobile:''};
+    profile=data||{id:currentUser.id,email:currentUser.email||'',name:'',mobile:''};
+    if(!String(profile.name||'').trim()){
+      const name=bestName();
+      if(name){const row={id:currentUser.id,name};if(currentUser.email)row.email=currentUser.email;
+        const {error:upsertError}=await client.from('profiles').upsert(row,{onConflict:'id'});
+        if(upsertError)console.warn('Profile name could not be saved:',upsertError.message);else profile={...profile,name};}
+    }
     if(profile.preferred_currency&&typeof activeLocale==='object'){const option=expandedCurrencies?.[profile.preferred_currency];if(option)activeLocale={...activeLocale,...option,code:profile.preferred_currency,country:profile.preferred_country||activeLocale.country};}
     window.dispatchEvent(new CustomEvent('supabase-profile',{detail:{user:currentUser,profile}}));
     const panel=document.getElementById('myra-panel');
-    panel?.contentWindow?.postMessage({type:'myra-auth',profile:{name:profile.name||anonName(),email:profile.email||currentUser.email,authenticated:true}},location.origin);
+    panel?.contentWindow?.postMessage({type:'myra-auth',profile:{name:bestName(),email:profile.email||currentUser.email,authenticated:true}},location.origin);
     return profile;
   }
   function authFrame(title, content){
-    modal(title, `<div class="myra-auth-grid"><aside class="myra-auth-visual" aria-label="Sunset over the ocean"><div class="myra-auth-brand">Trip Assistant</div><div class="myra-auth-caption"><span>TRAVEL, YOUR WAY</span><h2>Find your<br>kind of getaway.</h2><p>Thoughtful trip ideas, saved in one place.</p></div></aside><section class="myra-auth-content">${content}</section></div>`);
+    modal(title, `<div class="myra-auth-grid"><aside class="myra-auth-visual" aria-label="Sunset over the ocean"><img class="myra-auth-photo" src="assets/login-ocean-sunset.jpg" alt=""><div class="myra-auth-brand">Trip Assistant</div><div class="myra-auth-caption"><span>TRAVEL, YOUR WAY</span><h2>Find your<br>kind of getaway.</h2><p>Thoughtful trip ideas, saved in one place.</p></div></aside><section class="myra-auth-content">${content}</section></div>`);
     document.querySelector('#modalRoot .modal')?.classList.add('myra-auth-modal');
   }
   function askLogin(message='Sign in to save trips and bookings.'){
@@ -56,17 +65,33 @@
     if(!currentUser)return null;
     let p=await refreshProfile();
     if(p && p.name && p.mobile) return p;
-    const suggested=esc2(p?.name||anonName());
+    const suggested=esc2(bestName());
     modal('Complete your profile',`<p>Tell Myra what to call you. Your mobile number is saved only as a profile field; no SMS code is sent.</p><form id="profileForm"><label>Your name</label><input id="profileName" required minlength="2" maxlength="80" value="${suggested}" placeholder="Your name"><label>Mobile number</label><input id="profileMobile" required type="tel" minlength="7" maxlength="20" autocomplete="tel" placeholder="Mobile number"><button class="blue">SAVE PROFILE</button></form>`);
     document.getElementById('profileForm')?.addEventListener('submit',async e=>{e.preventDefault();const name=document.getElementById('profileName').value.trim(),mobile=document.getElementById('profileMobile').value.trim();try{const {error}=await client.from('profiles').upsert({id:currentUser.id,name,email:currentUser.email||'',mobile},{onConflict:'id'});if(error)throw error;await refreshProfile();closeModal();toast(`Welcome, ${name.split(/\s+/)[0]}!`);await loadTrips();}catch(err){toast(err.message||'Could not save profile.')}});
     return p;
   }
   async function signInGoogle(){const {error}=await client.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.href}});if(error)toast(error.message)}
   async function requestCode(email){const {error}=await client.auth.signInWithOtp({email,options:{shouldCreateUser:true}});if(error)throw error;return true}
+  /* Calls the myra-chat Edge Function. Failures are thrown as MyraBackendError
+     with a plain-language message and a code, so the chat never shows a
+     made-up answer when the backend fails. */
+  class MyraBackendError extends Error{constructor(message,code,status){super(message);this.name='MyraBackendError';this.code=code;this.status=status}}
   async function invoke(action,payload={}){
-    const {data,error}=await client.functions.invoke('myra-chat',{body:{action,...payload}});
-    if(error)throw error;
-    if(data?.error && !data?.fallback) throw new Error(data.error);
+    let result;
+    try{result=await client.functions.invoke('myra-chat',{body:{action,...payload}})}
+    catch(err){throw new MyraBackendError('Myra could not reach the server. Check your internet connection and try again.','network')}
+    const {data,error}=result;
+    if(error){
+      const status=error.context?.status;let body=null;
+      try{body=await error.context?.clone?.().json?.()}catch{}
+      if(error.name==='FunctionsFetchError')throw new MyraBackendError('Myra could not reach the server. Check your internet connection, or the Edge Function may be blocked by CORS.','network',status);
+      if(error.name==='FunctionsRelayError')throw new MyraBackendError('Supabase could not start Myra’s backend function. Please try again in a moment.','relay',status);
+      if(status===404)throw new MyraBackendError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed',status);
+      if(status===401||status===403)throw new MyraBackendError(body?.error||'Please sign in again to continue.','auth',status);
+      throw new MyraBackendError(body?.error||'Myra’s backend returned an error. Please try again.',body?.code||'server',status);
+    }
+    if(data?.fallback)throw new MyraBackendError('Myra’s AI service did not respond. Please try again.','ai_unavailable',200);
+    if(data?.ok===false||data?.error)throw new MyraBackendError(data.error||'The request could not be completed.',data.code||'server',200);
     return data;
   }
   async function saveBooking(details,total,itineraryId=null){
@@ -104,14 +129,14 @@
       if(window.__myTripsOpen)showTrips();
     }).subscribe();
   }
-  window.tripBackend={configured:true,client,getUser:()=>currentUser,getProfile:()=>profile,googleSignIn:signInGoogle,requestCode,verifyCode,askLogin,invoke,saveBooking,loadTrips,saveWishlist,removeWishlist,ensureProfile,async updateProfile(name,mobile){if(!currentUser)throw new Error('Sign in to edit your profile.');const {error}=await client.from('profiles').update({name,mobile,email:currentUser.email||''}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return profile;},async signOut(){await client.auth.signOut();closeModal()},saveLocale:async(country,currency)=>{if(!currentUser)return false;const {error}=await client.from('profiles').update({preferred_country:country,preferred_currency:currency}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return true;},getPastPreferences:async()=>{if(!currentUser)return null;const {data:reqs}=await client.from('trip_requests').select('id,destination,interests,created_at').eq('user_id',currentUser.id).eq('status','complete').order('created_at',{ascending:false}).limit(5);if(!reqs?.length)return null;const {data:its}=await client.from('itineraries').select('trip_request_id,itinerary_json').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(5);for(const r of reqs){const it=its?.find(x=>x.trip_request_id===r.id);const text=(r.interests+' '+JSON.stringify(it?.itinerary_json||{})).toLowerCase();if(/offbeat|less-crowded|quiet|not crowded|hidden gem/.test(text))return `Last time you liked offbeat places around ${r.destination}. Want something similar?`; }return null;},getRecentRequest:async()=>{if(!currentUser)return null;const cutoff=new Date(Date.now()-86400000).toISOString();const {data}=await client.from('trip_requests').select('*').eq('user_id',currentUser.id).eq('status','in_progress').gte('updated_at',cutoff).order('updated_at',{ascending:false}).limit(1).maybeSingle();return data||null;}};
+  window.tripBackend={configured:true,client,getUser:()=>currentUser,getProfile:()=>profile,googleSignIn:signInGoogle,requestCode,verifyCode,askLogin,invoke,saveBooking,loadTrips,saveWishlist,removeWishlist,ensureProfile,async updateProfile(name,mobile){if(!currentUser)throw new Error('Sign in to edit your profile.');name=String(name||'').trim();if(!name)throw new Error('Please enter your name.');const changes={name,mobile:String(mobile||'').trim()};if(currentUser.email)changes.email=currentUser.email;const {error}=await client.from('profiles').update(changes).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return profile;},async signOut(){await client.auth.signOut();closeModal()},saveLocale:async(country,currency)=>{if(!currentUser)return false;const {error}=await client.from('profiles').update({preferred_country:country,preferred_currency:currency}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return true;},getPastPreferences:async()=>{if(!currentUser)return null;const {data:reqs}=await client.from('trip_requests').select('id,destination,interests,created_at').eq('user_id',currentUser.id).eq('status','complete').order('created_at',{ascending:false}).limit(5);if(!reqs?.length)return null;const {data:its}=await client.from('itineraries').select('trip_request_id,itinerary_json').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(5);for(const r of reqs){const it=its?.find(x=>x.trip_request_id===r.id);const text=(r.interests+' '+JSON.stringify(it?.itinerary_json||{})).toLowerCase();if(/offbeat|less-crowded|quiet|not crowded|hidden gem/.test(text))return `Last time you liked offbeat places around ${r.destination}. Want something similar?`; }return null;},getRecentRequest:async()=>{if(!currentUser)return null;const cutoff=new Date(Date.now()-86400000).toISOString();const {data}=await client.from('trip_requests').select('*').eq('user_id',currentUser.id).eq('status','in_progress').gte('updated_at',cutoff).order('updated_at',{ascending:false}).limit(1).maybeSingle();return data||null;}};
   window.login=async function(){
-    if(!currentUser){askLogin();return;}
-    const name=profile?.name||anonName()||'';const mobile=profile?.mobile||'';
+    if(!currentUser){location.href=loginUrl();return;}
+    const name=bestName();const mobile=profile?.mobile||'';
     authFrame('Account settings', `<div class="myra-auth-kicker">YOUR TRIPASSISTANT ACCOUNT</div><h2>Account settings</h2><p class="myra-auth-intro">Update the details Myra uses to personalize your trip planning.</p><form id="accountSettingsForm" class="myra-auth-form"><label for="settingsName">Your name</label><input id="settingsName" required minlength="2" maxlength="80" autocomplete="name" value="${esc2(name)}"><label for="settingsEmail">Email address</label><input id="settingsEmail" type="email" value="${esc2(currentUser.email||'')}" disabled><label for="settingsMobile">Mobile number</label><input id="settingsMobile" type="tel" minlength="7" maxlength="20" autocomplete="tel" value="${esc2(mobile)}" placeholder="Optional — no SMS code"><button class="myra-auth-submit">Save account details</button></form><button class="myra-settings-secondary" type="button" onclick="locale()">Country &amp; currency</button><button class="myra-link-button myra-signout-button" type="button" onclick="window.tripBackend.signOut()">Sign out</button>`);
     document.getElementById('accountSettingsForm')?.addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;button.textContent='Saving…';try{await window.tripBackend.updateProfile(document.getElementById('settingsName').value.trim(),document.getElementById('settingsMobile').value.trim());closeModal();toast('Your account details are saved.')}catch(err){button.disabled=false;button.textContent='Save account details';toast(err.message||'Could not save your settings.')}});
   };
-  window.updateUser=function(){const el=document.getElementById('loginBtn');if(el)el.textContent=currentUser?'◉ Hi, '+(profile?.name||anonName()||'there').split(/\s+/)[0]+' ▾':'◉ Login or Create Account ▾'};
+  window.updateUser=function(){const el=document.getElementById('loginBtn');if(el)el.textContent=currentUser?'◉ Hi, '+(bestName()||'there').split(/\s+/)[0]+' ▾':'◉ Login or Create Account ▾'};
   window.showTrips=async function(){
     if(!currentUser){askLogin('Sign in to see trips and bookings saved to your account.');return;}
     window.__myTripsOpen=true;modal('My Trips','<p>Loading your saved trips…</p>');
@@ -144,7 +169,7 @@
   document.getElementById('loginBtn')?.addEventListener('click',e=>{e.preventDefault();window.login()});
   function sendMyraBootstrap(target=document.getElementById('myra-panel')?.contentWindow){
     if(!target)return;
-    target.postMessage({type:'myra-auth',profile:profile?{name:profile.name||anonName(),email:profile.email||currentUser?.email,authenticated:!!currentUser}:{name:'',authenticated:false}},location.origin);
+    target.postMessage({type:'myra-auth',profile:profile?{name:bestName(),email:profile.email||currentUser?.email,authenticated:!!currentUser}:{name:'',authenticated:false}},location.origin);
     target.postMessage({type:'myra-context',context:{from:state.from,to:state.to,category:state.category,start_date:state.date,end_date:state.returnDate,hasSearched:!!state.search}},location.origin);
   }
   window.addEventListener('message',async e=>{
