@@ -48,6 +48,12 @@ input:focus{border-color:#1786d6;box-shadow:0 0 0 3px #1686db20}
 .actions{display:flex;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap}
 .link-btn{border:0;padding:5px 0;background:none;color:#167bc2;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
 .link-btn:disabled{color:#9aa4b0;cursor:default}
+.demo-box{margin-top:22px;padding:14px 15px;border:1px dashed #b9cde2;border-radius:10px;background:#f7fbff}
+.demo-box b{display:block;font-size:12px;letter-spacing:1px;color:#1686db;margin-bottom:6px}
+.demo-box p{margin:0 0 10px;font-size:13px;line-height:1.55;color:#4a5a6d}
+.demo-box code{font-size:13px;background:#fff;border:1px solid #dfe7f0;border-radius:5px;padding:1px 6px;color:#182a3c}
+.demo-btn{width:100%;height:44px;border:1px solid #1686db;border-radius:8px;background:#fff;color:#1686db;font:inherit;font-size:14px;font-weight:800;cursor:pointer}
+.demo-btn:hover{background:#eef7ff}.demo-btn:disabled{opacity:.6;cursor:wait}
 .footnote{font-size:13px;line-height:1.55;color:#738091;margin:15px 0 0}
 .terms{font-size:11px;line-height:1.55;color:#9aa4b0;margin:19px 0 0}
 [hidden]{display:none!important}
@@ -87,6 +93,11 @@ input:focus{border-color:#1786d6;box-shadow:0 0 0 3px #1686db20}
           <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required>
           <button class="submit" id="sendBtn">Send me a 6-digit code</button>
         </form>
+        <div class="demo-box" id="demoBox">
+          <b>DEMO ACCOUNT</b>
+          <p>For testing without email: <br>Email <code id="demoEmail"></code><br>Password <code id="demoPassword"></code></p>
+          <button class="demo-btn" id="demoBtn" type="button">Sign in with demo account</button>
+        </div>
         <p class="footnote">New to Trip Assistant? Your account is created when you verify your email. No password or SMS needed.</p>
         <p class="terms">By continuing, you agree to use Trip Assistant. Myra helps with your travel planning.</p>
       </section>

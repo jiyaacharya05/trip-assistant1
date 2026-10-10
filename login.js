@@ -12,7 +12,14 @@
       return url.pathname + url.search + url.hash;
     } catch { return 'index.html'; }
   }
+  // Shared demo account for class testing. It is a real Supabase user that
+  // you create once in the dashboard (see SUPABASE_SETUP.md). Anyone who
+  // opens this page can see it, so never store real data in it.
+  const DEMO_EMAIL = window.TRIP_DEMO_EMAIL || 'demo@tripassistant.app';
+  const DEMO_PASSWORD = window.TRIP_DEMO_PASSWORD || 'TripDemo@2026';
   const next = safeNext();
+  $('demoEmail').textContent = DEMO_EMAIL;
+  $('demoPassword').textContent = DEMO_PASSWORD;
   $('backLink').href = next;
   $('continueLink').href = next;
 
@@ -31,7 +38,7 @@
     show($('status'), 'error', !window.supabase?.createClient
       ? 'The sign-in service could not load. Check your internet connection and refresh the page.'
       : 'Sign-in is not set up yet: add the Supabase project URL and anon key to supabase-config.js.');
-    $('googleBtn').disabled = true; $('sendBtn').disabled = true;
+    $('googleBtn').disabled = true; $('sendBtn').disabled = true; $('demoBtn').disabled = true;
     return;
   }
   const client = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
@@ -91,6 +98,26 @@
     if (error) {
       $('googleBtn').disabled = false;
       show($('status'), 'error', 'Google sign-in could not start: ' + error.message);
+    }
+  });
+
+  // Demo account: email + password, no email is sent.
+  $('demoBtn').addEventListener('click', async () => {
+    hide($('status'));
+    const btn = $('demoBtn');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    try {
+      const { data, error } = await client.auth.signInWithPassword({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+      if (error) throw error;
+      await finish(data.user);
+    } catch (err) {
+      const msg = String(err?.message || '');
+      show($('status'), 'error', /invalid login credentials/i.test(msg)
+        ? 'The demo account is not set up in Supabase yet. In Supabase open Authentication → Users → Add user, enter the demo email and password shown below, tick “Auto Confirm User”, and save.'
+        : /email not confirmed/i.test(msg)
+          ? 'The demo account exists but is not confirmed. In Supabase open Authentication → Users, open the demo user and confirm it.'
+          : friendly(err, 'Demo sign-in failed. Please try again.'));
+      btn.disabled = false; btn.textContent = 'Sign in with demo account';
     }
   });
 
