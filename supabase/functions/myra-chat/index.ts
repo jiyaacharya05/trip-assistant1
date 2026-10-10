@@ -10,7 +10,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 });
 const validTravellers = new Set(['solo', 'couple', 'family', 'friends']);
 const validPaces = new Set(['relaxed', 'normal', 'packed']);
-const fallback = { ok: true, fallback: true, reply: 'Myra is having trouble right now, here are some quick options.' };
+class AiError extends Error { constructor(public code: string, message: string) { super(message); } }
 const serviceUrl = Deno.env.get('SUPABASE_URL')!;
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const admin = createClient(serviceUrl, serviceKey, { auth: { persistSession: false } });
@@ -24,14 +24,25 @@ async function authenticatedUser(req: Request) {
 }
 async function groq(messages: unknown[], temperature = 0.25) {
   const key = Deno.env.get('GROQ_API_KEY');
-  if (!key) throw new Error('AI service is not configured');
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'openai/gpt-oss-20b', messages, temperature, response_format: { type: 'json_object' } }),
-  });
-  if (!response.ok) throw new Error(`Groq request failed (${response.status})`);
+  if (!key) throw new AiError('ai_not_configured', 'Myra’s AI key (GROQ_API_KEY) is not set in Supabase Edge Function secrets.');
+  let response: Response;
+  try {
+    response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'openai/gpt-oss-20b', messages, temperature, response_format: { type: 'json_object' } }),
+    });
+  } catch (err) {
+    console.error('Groq unreachable:', err);
+    throw new AiError('ai_unavailable', 'Myra’s AI service did not respond. Please try again.');
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new AiError('ai_key_invalid', 'Myra’s AI key (GROQ_API_KEY) was rejected by Groq. Check the secret in Supabase.');
+  }
+  if (response.status === 429) throw new AiError('ai_rate_limited', 'Myra is getting too many requests right now. Please wait a moment and try again.');
+  if (!response.ok) throw new AiError('ai_unavailable', `Myra’s AI service did not respond (Groq ${response.status}). Please try again.`);
   const payload = await response.json();
-  return JSON.parse(payload.choices?.[0]?.message?.content || '{}');
+  try { return JSON.parse(payload.choices?.[0]?.message?.content || '{}'); }
+  catch { throw new AiError('ai_unavailable', 'Myra’s AI service returned an unreadable reply. Please try again.'); }
 }
 const dateOK = (value: unknown) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -357,7 +368,10 @@ Deno.serve(async (req) => {
     return json({ error: 'Unknown action' }, 400);
   } catch (error) {
     console.error('myra-chat failed:', error);
-    if (action === 'chat' || action === 'plan' || action === 'assistant') return json(fallback);
+    if (error instanceof AiError) {
+      const status = error.code === 'ai_not_configured' || error.code === 'ai_key_invalid' ? 503 : error.code === 'ai_rate_limited' ? 429 : 502;
+      return json({ ok: false, code: error.code, error: error.message }, status);
+    }
     return json({ ok: false, error: 'The request could not be completed. Please try again.' }, 500);
   }
 });
