@@ -117,3 +117,21 @@ There are no shared demo accounts or fixed codes. To test:
 2. Copy the 6-digit code from the email and press **Verify and continue**. The account is created on first sign-in.
 3. Optional: create the test user first in **Authentication → Users → Add user → Send invitation / Create new user** with a real test address (for example a Gmail alias like `you+tripassistant@gmail.com`).
 4. Without custom SMTP, Supabase only sends to addresses of your project team members, with a low hourly limit. Set up SMTP (step 2.9) before testing other addresses.
+
+## Demo account (email + password, no email needed)
+
+The login page shows a shared demo account: `demo@tripassistant.app` / `TripDemo@2026`. Create it once:
+
+1. Supabase → **Authentication → Users → Add user → Create new user**.
+2. Email `demo@tripassistant.app`, password `TripDemo@2026`, tick **Auto Confirm User**, then **Create user**.
+3. Check **Authentication → Sign In / Providers → Email** is enabled (password sign-in is on by default).
+
+Anyone who opens the login page can see these details, so use this account for testing only. To change them, set `window.TRIP_DEMO_EMAIL` and `window.TRIP_DEMO_PASSWORD` in `supabase-config.js` and update the user in Supabase.
+
+## Deploy Myra without the CLI (Supabase dashboard)
+
+1. Supabase → **Edge Functions → Deploy a new function → Via editor**.
+2. Name it exactly `myra-chat`. Replace the sample code with the full content of `supabase/functions/myra-chat/index.ts`. Click **Deploy function**.
+3. Open the function → **Details**, and turn **Verify JWT / Enforce JWT verification** OFF. The site uses the new `sb_publishable_…` key, which is not a JWT, so with this ON every request is rejected.
+4. **Edge Functions → Secrets → Add new secret**: `GROQ_API_KEY` = your Groq key. Optional: `N8N_WEBHOOK_URL`.
+5. Test: open the site, open Myra, ask “Is October a good month for the Kerala backwaters?”. A real answer means it works. If not, Myra now shows the exact problem (see the table above), and **Edge Functions → myra-chat → Logs** shows details.

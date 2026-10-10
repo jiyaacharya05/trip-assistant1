@@ -170,7 +170,8 @@ async function persistPartial(userId: string | undefined, id: string | undefined
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  // Allow whatever headers the browser asks for, so newer supabase-js versions never fail the CORS check.
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: { ...cors, 'Access-Control-Allow-Headers': req.headers.get('Access-Control-Request-Headers') || cors['Access-Control-Allow-Headers'], 'Access-Control-Max-Age': '86400' } });
   if (req.method !== 'POST') return json({ error: 'POST required' }, 405);
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
