@@ -14,7 +14,7 @@
     return;
   }
   const client = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, { auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true} });
-  let currentUser=null, profile=null, reviewChannel=null, wishItems=[],pendingHotelBooking=null;
+  let currentUser=null, currentSession=null, profile=null, reviewChannel=null, wishItems=[],pendingHotelBooking=null;
   const anonName=()=>currentUser?.user_metadata?.full_name||currentUser?.user_metadata?.name||'';
   /* Display name: Supabase profile name, then Google metadata, then the email prefix. */
   const bestName=()=>[profile?.name,currentUser?.user_metadata?.full_name,currentUser?.user_metadata?.name,(currentUser?.email||'').split('@')[0]].map(v=>String(v||'').trim()).find(Boolean)||'';
@@ -76,24 +76,32 @@
      with a plain-language message and a code, so the chat never shows a
      made-up answer when the backend fails. */
   class MyraBackendError extends Error{constructor(message,code,status){super(message);this.name='MyraBackendError';this.code=code;this.status=status}}
+  /* Direct fetch with a 30-second timeout. It does not wait on the Supabase
+     auth lock, so a stuck session refresh can never freeze Myra. */
   async function invoke(action,payload={}){
-    let result;
-    try{result=await client.functions.invoke('myra-chat',{body:{action,...payload}})}
-    catch(err){throw new MyraBackendError('Myra could not reach the server. Check your internet connection and try again.','network')}
-    const {data,error}=result;
-    if(error){
-      const status=error.context?.status;let body=null;
-      try{body=await error.context?.clone?.().json?.()}catch{}
-      if(error.name==='FunctionsFetchError')throw new MyraBackendError('Myra could not reach the server. Check your internet connection, or the Edge Function may be blocked by CORS.','network',status);
-      if(error.name==='FunctionsRelayError')throw new MyraBackendError('Supabase could not start Myra’s backend function. Please try again in a moment.','relay',status);
-      if(status===404)throw new MyraBackendError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed',status);
-      if(status===401||status===403)throw new MyraBackendError(body?.error||'Please sign in again to continue.','auth',status);
-      throw new MyraBackendError(body?.error||'Myra’s backend returned an error. Please try again.',body?.code||'server',status);
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),30000);
+    const headers={'Content-Type':'application/json',apikey:window.SUPABASE_ANON_KEY};
+    if(currentSession?.access_token)headers.Authorization='Bearer '+currentSession.access_token;
+    let res;
+    try{res=await fetch(window.SUPABASE_URL.replace(/\/$/,'')+'/functions/v1/myra-chat',{method:'POST',headers,body:JSON.stringify({action,...payload}),signal:controller.signal})}
+    catch(err){
+      if(err?.name==='AbortError')throw new MyraBackendError('Myra’s server did not answer within 30 seconds. Please try again.','timeout');
+      throw new MyraBackendError('Myra could not reach the server. Check your internet connection. If this keeps happening, the myra-chat Edge Function may not be deployed in Supabase.','network');
     }
-    if(data?.fallback)throw new MyraBackendError('Myra’s AI service did not respond. Please try again.','ai_unavailable',200);
-    if(data?.ok===false||data?.error)throw new MyraBackendError(data.error||'The request could not be completed.',data.code||'server',200);
-    return data;
+    finally{clearTimeout(timer)}
+    let body=null;try{body=await res.json()}catch{}
+    if(!res.ok){
+      if(res.status===404)throw new MyraBackendError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed',404);
+      if(res.status===401||res.status===403)throw new MyraBackendError(body?.error||'Supabase rejected the request. Turn OFF “Verify JWT” for the myra-chat Edge Function, then try again.','auth',res.status);
+      throw new MyraBackendError(body?.error||body?.message||`Myra’s backend returned an error (${res.status}). Please try again.`,body?.code||'server',res.status);
+    }
+    if(!body)throw new MyraBackendError('Myra’s backend sent an empty reply. Please try again.','server',res.status);
+    if(body.fallback)throw new MyraBackendError('Myra’s AI service did not respond. Please try again.','ai_unavailable',200);
+    if(body.ok===false||body.error)throw new MyraBackendError(body.error||'The request could not be completed.',body.code||'server',200);
+    return body;
   }
+
   async function saveBooking(details,total,itineraryId=null){
     if(!currentUser){askLogin('Please sign in before confirming a booking.');throw new Error('Sign-in required');}
     const data=await invoke('create_booking',{details,total_inr:Math.max(0,Math.round(Number(total)||0)),itinerary_id:itineraryId});
@@ -159,13 +167,17 @@
     try{if(currentUser)await window.tripBackend.saveLocale(countryName,code);closeModal();renderResults();toast(`Prices now display in ${code}.`)}
     catch(err){toast(err.message||'Could not save your currency preference.')}};
   window.tripBackend.listenReviews=listenReviews;
-  client.auth.onAuthStateChange(async(_event,session)=>{
-    currentUser=session?.user||null;
+  client.auth.onAuthStateChange((_event,session)=>{
+    currentSession=session||null;currentUser=session?.user||null;
+    // Run Supabase calls after the auth callback returns (avoids the supabase-js auth-lock deadlock).
+    setTimeout(()=>onAuthChange(_event),0);
+  });
+  async function onAuthChange(_event){
     try{await refreshProfile();if(currentUser){listenReviews();await loadTrips();if(_event==='SIGNED_IN')await ensureProfile();if(pendingHotelBooking){const pending=pendingHotelBooking;pendingHotelBooking=null;try{const booking=await saveBooking(pending.details,pending.total_inr,pending.itinerary_id||null);pending.source?.postMessage({type:'hotel-booking-saved',booking_ref:booking.booking_ref},location.origin);toast('Hotel booking saved to My Trips.')}catch(err){console.error(err);toast('Could not save the hotel booking.')}}}else{reviewChannel?.unsubscribe();trips=[];wishlist=[];wishItems=[];}}
     catch(err){console.error(err);toast('Account data could not be loaded. Check your Supabase setup.')}
     if(typeof updateUser==='function')updateUser();
-  });
-  client.auth.getSession().then(async({data})=>{currentUser=data.session?.user||null;if(currentUser){await refreshProfile();listenReviews();await loadTrips();if(!profile?.name||!profile?.mobile)await ensureProfile()}updateUser()}).catch(console.error);
+  }
+  client.auth.getSession().then(async({data})=>{currentSession=data.session||null;currentUser=data.session?.user||null;if(currentUser){await refreshProfile();listenReviews();await loadTrips();if(!profile?.name||!profile?.mobile)await ensureProfile()}updateUser()}).catch(console.error);
   document.getElementById('loginBtn')?.addEventListener('click',e=>{e.preventDefault();window.login()});
   function sendMyraBootstrap(target=document.getElementById('myra-panel')?.contentWindow){
     if(!target)return;
