@@ -99,13 +99,13 @@ function localDecision(query){
   if(matched&&searchIntent){
     const category=matched.category;
     const captured=destinationMatch?.[1]?.trim();
-    const destination=captured&&/^(me|here|near me)$/i.test(captured)?(siteContext.to||context.to||''):(captured?title(captured):(siteContext.to||context.to||''));
+    const destination=captured&&/^(me|here|near me)$/i.test(captured)?(context.to||context.to||''):(captured?title(captured):(context.to||context.to||''));
     const sort=/\b(top rated|best rated|highest rated|recommended)\b/i.test(q)?'rating':/\b(fastest|quickest|non.?stop)\b/i.test(q)?'fastest':'low';
     const reply=`I’m opening ${category.toLowerCase()}${destination?` for ${destination}`:''}. You can review and select a sample result on the page.`;
     return category==='Flights'?{reply:destination?`I’ve opened flight options for your route. Compare the sample fares below.`:'I’ve opened sample flight options for your current route.',action:'search',payload:{sort}}:{reply,action:'navigate',payload:{category,to:destination,sort}};
   }
-  if(/\b(cheapest|lowest price|lowest fare|budget flights?)\b/i.test(q) && (!/hotel|villa|package|tour|train|bus|cab/i.test(q)))return {reply:'I’ve sorted the available sample flight fares from lowest to highest.',action:'navigate',payload:{category:'Flights',from:siteContext.from||context.from||'Delhi',to:siteContext.to||context.to||'Bengaluru',sort:'low'}};
-  if(/\b(fastest|quickest|non.?stop)\b/i.test(q) && !matched)return {reply:'I’ve selected the fastest sample flight options for your current route.',action:'navigate',payload:{category:'Flights',from:siteContext.from||context.from||'Delhi',to:siteContext.to||context.to||'Bengaluru',sort:'fastest'}};
+  if(/\b(cheapest|lowest price|lowest fare|budget flights?)\b/i.test(q) && (!/hotel|villa|package|tour|train|bus|cab/i.test(q)))return {reply:'I’ve sorted the available sample flight fares from lowest to highest.',action:'navigate',payload:{category:'Flights',from:context.from||context.from||'Delhi',to:context.to||context.to||'Bengaluru',sort:'low'}};
+  if(/\b(fastest|quickest|non.?stop)\b/i.test(q) && !matched)return {reply:'I’ve selected the fastest sample flight options for your current route.',action:'navigate',payload:{category:'Flights',from:context.from||context.from||'Delhi',to:context.to||context.to||'Bengaluru',sort:'fastest'}};
   if(/\b(baggage|luggage|cancel|cancellation|refund|visa|weather|best time|currency|payment|book|booking|save|wishlist|my trips|sign.?in|login|rating|map|photos?|images?|rooms?|amenities|polic(?:y|ies))\b/i.test(q))return {reply:localSiteAnswer(q),action:null};
   return {reply:'',action:null};
 }
