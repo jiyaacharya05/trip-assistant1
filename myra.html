@@ -207,13 +207,14 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
        Use the same-origin app server only when direct network/CORS access is unavailable. */
     try{
       console.log('[Myra] sending',action,'directly to Supabase');
-      res=await postJson(cfg.url+'/functions/v1/myra-chat',{'Content-Type':'application/json',apikey:cfg.key,...auth},body,25000);
+      res=await postJson(cfg.url+'/functions/v1/myra-chat',{'Content-Type':'application/json',apikey:cfg.key,...auth},body,20000);
     }catch(err){
       directError=err;
+      if(err?.code==='timeout')throw myraError('Myra’s AI service timed out. Please try again in a moment.','timeout');
       console.warn('[Myra] direct Supabase request failed; trying /api/myra fallback',err);
       try{
         route='proxy';
-        res=await postJson('/api/myra',{'Content-Type':'application/json',...auth},body,25000);
+        res=await postJson('/api/myra',{'Content-Type':'application/json',...auth},body,20000);
       }catch(proxyError){
         if(directError.code==='timeout'||proxyError.code==='timeout')throw myraError('Myra is taking longer than expected. Please try again.','timeout');
         throw myraError('Myra could not reach its chat service. Check the Supabase URL, anon key, and myra-chat Edge Function settings, then try again.','network');
@@ -241,7 +242,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     return data;
   }
   /* Safety net: the typing indicator can never stay forever. */
-  function watchdog(el,retry){return setTimeout(()=>{if(el.isConnected){el.remove();backendError(myraError('Myra did not get a reply in 60 seconds. Please try again.','timeout'),retry)}},60000)}
+  function watchdog(el,retry){return setTimeout(()=>{if(el.isConnected){el.remove();backendError(myraError('Myra is taking longer than expected. Please try again.','timeout'),retry)}},35000)}
   function addWhy(status,explanation){
     if(status==='Rejected')return '';
     return `<div class="notice" style="margin:12px 0"><b>Why this plan</b><br>${status==='Approved'?esc(explanation||''):'Being reviewed by our team'}</div>`;
@@ -265,6 +266,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     const api=parent.tripBackend;if(!api?.configured){add('answer','<p>Supabase setup is needed before bookings can be saved.</p>');return;}
     if(!api.getUser()){add('answer','<p>Please sign in before booking this stay, then tap <b>Book stay</b> again.</p>');api.askLogin('Sign in before booking a stay.');return;}
     const hotel=plan.days?.[0]?.stay,record=(plan.hotels||[]).find(h=>h.name===hotel);
+    if(!record){add('answer','<p>No verified stay is available to book in this plan. Accommodation was excluded rather than inventing a property.</p>');return;}
     if(!savedItinerary||planDirty){try{const saved=await api.savePlan(trip,plan,tripRequestId,savedItinerary?.id);tripRequestId=saved.trip_request_id;savedItinerary=saved.itinerary;planDirty=false;renderPlan(plan)}catch(e){add('answer',`<p>${esc(e.message||'Save the itinerary before booking.')}</p>`);return}}
     const nights=Math.max(0,Math.round((Date.parse(trip.end_date)-Date.parse(trip.start_date))/86400000));const amount=(record?.price_per_night_inr||0)*nights;
     add('journey',`<div class="journey-head">Review your stay<small>${esc(trip.destination)} · ${fmtDate(trip.start_date)} – ${fmtDate(trip.end_date)}</small></div><div class="flight-card"><b>${esc(hotel)}</b><p>${esc(record?.area||trip.destination)} · ${nights} night(s) · sample catalogue rate ₹${Number(record?.price_per_night_inr||0).toLocaleString('en-IN')} per night</p><div class="price">Estimated stay total: ₹${amount.toLocaleString('en-IN')}</div><div class="notice">Sample booking only. No payment is collected here.</div><button class="send" style="width:auto;border-radius:20px;padding:0 16px;margin-top:12px" data-confirm-stay>Confirm sample stay</button></div>`);
@@ -279,6 +281,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
       if(data.fallback){add('answer',`<p>${esc(data.reply)}</p>`);chips([{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'},{label:'Try again',value:'plan a trip'}]);return}
       if(data.no_catalogue){add('answer',`<p>${esc(data.reply)}</p>`);if(data.hotels?.length)add('answer',`<p>Catalogue stays: ${data.hotels.map(h=>`${esc(h.name)} (${esc(h.area)})`).join(' · ')}</p>`);return}if(data.budget_too_low){add('answer',`<p>${esc(data.reply)}</p>`);return}
       const checked=normalizePlanCosts({...data.plan,hotels:data.hotels},trip);if(checked.error){add('answer',`<p>${esc(checked.error)}</p>`);return}plan=checked.plan;planDirty=true;renderPlan(plan);
+      if(data.catalogue_notice)add('answer',`<p class="notice">${esc(data.catalogue_notice)}</p>`);
     }catch(e){clearTimeout(dog);if(!typing.isConnected)return;typing.remove();backendError(e,()=>makePlan(changeRequest))}
   }
   async function ask(query){
