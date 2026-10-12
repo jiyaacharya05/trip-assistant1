@@ -171,6 +171,53 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     const actions=add('response-actions','<button type="button" data-retry>Try again</button>');
     actions.querySelector('[data-retry]').onclick=()=>{label.remove();note.remove();actions.remove();retry()};
   }
+  /* Calls Myra's backend (the myra-chat Supabase Edge Function) directly with
+     fetch. It reads the public URL/key from the page and the signed-in token
+     straight from storage, so it never waits on the Supabase sign-in library.
+     Always finishes within 30 seconds: a real reply or a MyraBackendError. */
+  function myraError(message,code){const e=new Error(message);e.name='MyraBackendError';e.code=code;return e}
+  function myraConfig(){
+    let P=null;try{P=parent}catch{}
+    const url=String((P&&P.SUPABASE_URL)||window.SUPABASE_URL||'').replace(/\/$/,'');
+    const key=String((P&&P.SUPABASE_ANON_KEY)||window.SUPABASE_ANON_KEY||'');
+    if(!/^https:\/\//.test(url)||!key||/YOUR_/.test(url+key))return null;
+    let token=null;
+    try{
+      const ref=new URL(url).hostname.split('.')[0];
+      const raw=(P||window).localStorage.getItem(`sb-${ref}-auth-token`);
+      const s=raw?JSON.parse(raw):null;const sess=s?.access_token?s:(s?.currentSession||s?.session||null);
+      if(sess?.access_token&&(!sess.expires_at||sess.expires_at*1000>Date.now()+30000))token=sess.access_token;
+    }catch{}
+    return {url,key,token};
+  }
+  async function callMyra(action,payload={}){
+    const cfg=myraConfig();
+    if(!cfg)throw myraError('Myra’s AI is not connected: the page could not load its Supabase settings (supabase-config.js). Refresh the page and try again.','config');
+    const headers={'Content-Type':'application/json',apikey:cfg.key};
+    if(cfg.token)headers.Authorization='Bearer '+cfg.token;
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
+    let res;
+    try{console.log('[Myra] sending',action);res=await fetch(cfg.url+'/functions/v1/myra-chat',{method:'POST',headers,body:JSON.stringify({action,...payload}),signal:controller.signal})}
+    catch(err){console.warn('[Myra] request failed',err);throw err?.name==='AbortError'?myraError('Myra’s server did not answer within 30 seconds. Please try again.','timeout'):myraError('Myra could not reach the server. Check your internet connection and try again.','network')}
+    finally{clearTimeout(timer)}
+    console.log('[Myra] status',res.status);
+    let body=null;try{body=await res.json()}catch{}
+    if(res.status===404)throw myraError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed');
+    if(res.status===401||res.status===403){
+      if(cfg.token&&action!=='save_plan'&&action!=='create_booking'){ // stale sign-in token: retry once as a guest
+        const retry=await fetch(cfg.url+'/functions/v1/myra-chat',{method:'POST',headers:{'Content-Type':'application/json',apikey:cfg.key},body:JSON.stringify({action,...payload})}).catch(()=>null);
+        if(retry&&retry.ok){const b=await retry.json().catch(()=>null);if(b&&b.ok!==false&&!b.error)return b}
+      }
+      throw myraError(body?.error||body?.msg||'Supabase rejected the request. In Supabase, open Edge Functions → myra-chat and turn OFF “Verify JWT”, then try again.','auth');
+    }
+    if(!res.ok)throw myraError(body?.error||body?.message||`Myra’s backend returned an error (${res.status}). Please try again.`,body?.code||'server');
+    if(!body)throw myraError('Myra’s backend sent an empty reply. Please try again.','server');
+    if(body.fallback)throw myraError('Myra’s AI service did not respond. Please try again.','ai_unavailable');
+    if(body.ok===false||body.error)throw myraError(body.error||'The request could not be completed.',body.code||'server');
+    return body;
+  }
+  /* Safety net: the typing indicator can never stay forever. */
+  function watchdog(el,retry){return setTimeout(()=>{if(el.isConnected){el.remove();backendError(myraError('Myra did not get a reply in 40 seconds. Please try again.','timeout'),retry)}},40000)}
   function addWhy(status,explanation){
     if(status==='Rejected')return '';
     return `<div class="notice" style="margin:12px 0"><b>Why this plan</b><br>${status==='Approved'?esc(explanation||''):'Being reviewed by our team'}</div>`;
@@ -203,11 +250,12 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
   function isTripPlanningRequest(text){return /\b(?:itinerary|itineraries|itertary|trip\s+plan|plan\b.*\btrip\b|(?:make|create|build|draft)\b.*\b(?:itinerary|trip|holiday|vacation)\b|\d+\s*[- ]?day\s+(?:trip|holiday|vacation))\b/i.test(String(text||''))}
   async function makePlan(changeRequest=''){
     add('typing','Myra is building your day-by-day plan…');const typing=messages.lastElementChild;
-    try{const data=await parent.tripBackend.invoke('plan',{trip, current_plan:plan, change_request:changeRequest});typing.remove();
+    const dog=watchdog(typing,()=>makePlan(changeRequest));
+    try{const data=await callMyra('plan',{trip, current_plan:plan, change_request:changeRequest});clearTimeout(dog);if(!typing.isConnected)return;typing.remove();
       if(data.fallback){add('answer',`<p>${esc(data.reply)}</p>`);chips([{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'},{label:'Try again',value:'plan a trip'}]);return}
       if(data.no_catalogue){add('answer',`<p>${esc(data.reply)}</p>`);if(data.hotels?.length)add('answer',`<p>Catalogue stays: ${data.hotels.map(h=>`${esc(h.name)} (${esc(h.area)})`).join(' · ')}</p>`);return}if(data.budget_too_low){add('answer',`<p>${esc(data.reply)}</p>`);return}
       const checked=normalizePlanCosts({...data.plan,hotels:data.hotels},trip);if(checked.error){add('answer',`<p>${esc(checked.error)}</p>`);return}plan=checked.plan;planDirty=true;renderPlan(plan);
-    }catch(e){typing.remove();backendError(e,()=>makePlan(changeRequest))}
+    }catch(e){clearTimeout(dog);if(!typing.isConnected)return;typing.remove();backendError(e,()=>makePlan(changeRequest))}
   }
   async function ask(query){
     query=String(query||'').trim().slice(0,500);if(!query)return;openMessages();input.value='';append('query',esc(query));
@@ -246,11 +294,12 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
   async function backendTurn(query,planningIntent){
     const api=parent.tripBackend;
     const locallyUpdatedTrip=localTripUpdate(query,trip,nextQuestion);
-    if(!api?.configured){backendError({name:'MyraBackendError',message:'Myra’s AI is not connected: the page could not load its Supabase configuration (supabase-config.js) or the Supabase library. Refresh the page and try again.'},()=>backendTurn(query,planningIntent));return;}
+
     const wait=add('typing',planningIntent?'Myra is planning with you…':'Myra is checking your question…');
+    const dog=watchdog(wait,()=>backendTurn(query,planningIntent));
     try{
       if(!planningIntent){
-        const data=await api.invoke('assistant',{message:query,history:history.slice(-8),search_context:siteContext});wait.remove();
+        const data=await callMyra('assistant',{message:query,history:history.slice(-8),search_context:siteContext});clearTimeout(dog);if(!wait.isConnected)return;wait.remove();
         if(data.fallback){add('answer',`<p>${esc(data.reply||'Myra is having trouble right now, here are some quick options.')}</p>`);chips([{label:'Plan a trip',value:'Plan a trip'},{label:'Cheapest flights',value:'Cheapest flights'},{label:'Hotels near me',value:'Hotels near me'}]);return;}
         const answer=String(data.reply||'I can help with the travel sections and sample booking flows on this site.').slice(0,1200);
         add('myra-label','Myra<sup>✦</sup>');add('answer',`<p>${esc(answer)}</p>`);
@@ -262,14 +311,14 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
         }
         history.push({role:'user',content:query},{role:'assistant',content:answer});speak(answer);return;
       }
-      const data=await api.invoke('chat',{message:query,trip:locallyUpdatedTrip,expected_field:nextQuestion,trip_request_id:tripRequestId,history,search_context:siteContext});wait.remove();
+      const data=await callMyra('chat',{message:query,trip:locallyUpdatedTrip,expected_field:nextQuestion,trip_request_id:tripRequestId,history,search_context:siteContext});clearTimeout(dog);if(!wait.isConnected)return;wait.remove();
       trip={...(data.trip||locallyUpdatedTrip),...(locallyUpdatedTrip.duration_days?{duration_days:locallyUpdatedTrip.duration_days}:{})};tripRequestId=data.trip_request_id||tripRequestId;if(siteContext.hasSearched&&!contextConfirmed&&trip.destination&&trip.start_date&&trip.end_date){contextConfirmed=true;add('answer',`<p>Planning for ${esc(trip.destination)}, ${fmtDate(trip.start_date)}–${fmtDate(trip.end_date)}?</p>`)}history.push({role:'user',content:query});history.push({role:'assistant',content:data.question||data.reply||''});
       if(data.reply&&!String(data.reply).trim().endsWith('?'))add('answer',`<p>${esc(data.reply)}</p>`);
       const missing=firstMissing(trip);if(!missing||data.ready){nextQuestion=null;add('answer',`<p>${esc(data.ready?data.question||'Lovely, I have everything I need. I’m putting your plan together now.':'Lovely, I have everything I need. I’m putting your plan together now.')}</p>`);await makePlan();return;}
       nextQuestion=missing;add('answer',`<p>${esc(questionFor(missing))}</p>`);
       if(missing==='travellers_type')chips([{label:'Solo',value:'Solo'},{label:'Couple',value:'Couple'},{label:'Family (kids/elders)',value:'Family with kids or elders'},{label:'Friends group',value:'Friends'}]);
       if(missing==='pace')chips([{label:'Relaxed',value:'Relaxed pace'},{label:'Normal',value:'Normal pace'},{label:'Packed',value:'Packed pace'}]);
-    }catch(e){wait.remove();backendError(e,()=>backendTurn(query,planningIntent));}
+    }catch(e){clearTimeout(dog);if(!wait.isConnected)return;wait.remove();backendError(e,()=>backendTurn(query,planningIntent));}
   }
   function readVisibleFlights(){
     try{return [...parent.document.querySelectorAll('#resultList .result-card')].slice(0,5).map(card=>{const route=card.querySelector('.route'),parts=route?[...route.children]:[],priceLabel=card.querySelector('.price h3')?.innerText?.trim()||'',name=card.querySelector('h3')?.innerText?.trim()||'',time=parts[0]?.querySelector('b')?.innerText?.trim()||'',arrival=parts[2]?.querySelector('b')?.innerText?.trim()||'',middle=parts[1]?.innerText||'',stops=/non.?stop/i.test(middle)?0:1;return{name,time,arrival,stops,price_label:priceLabel,duration:middle.match(/\d+h\s*\d*m/i)?.[0]||'2h 45m'}}).filter(f=>f.name&&f.price_label)}catch{return[]}

@@ -64,7 +64,7 @@
   async function ensureProfile(){
     if(!currentUser)return null;
     let p=await refreshProfile();
-    if(p && p.name && p.mobile) return p;
+    if(p && String(p.name||'').trim()) return p; // mobile is optional; only ask when the name is missing
     const suggested=esc2(bestName());
     modal('Complete your profile',`<p>Tell Myra what to call you. Your mobile number is saved only as a profile field; no SMS code is sent.</p><form id="profileForm"><label>Your name</label><input id="profileName" required minlength="2" maxlength="80" value="${suggested}" placeholder="Your name"><label>Mobile number</label><input id="profileMobile" required type="tel" minlength="7" maxlength="20" autocomplete="tel" placeholder="Mobile number"><button class="blue">SAVE PROFILE</button></form>`);
     document.getElementById('profileForm')?.addEventListener('submit',async e=>{e.preventDefault();const name=document.getElementById('profileName').value.trim(),mobile=document.getElementById('profileMobile').value.trim();try{const {error}=await client.from('profiles').upsert({id:currentUser.id,name,email:currentUser.email||'',mobile},{onConflict:'id'});if(error)throw error;await refreshProfile();closeModal();toast(`Welcome, ${name.split(/\s+/)[0]}!`);await loadTrips();}catch(err){toast(err.message||'Could not save profile.')}});
@@ -177,7 +177,7 @@
     catch(err){console.error(err);toast('Account data could not be loaded. Check your Supabase setup.')}
     if(typeof updateUser==='function')updateUser();
   }
-  client.auth.getSession().then(async({data})=>{currentSession=data.session||null;currentUser=data.session?.user||null;if(currentUser){await refreshProfile();listenReviews();await loadTrips();if(!profile?.name||!profile?.mobile)await ensureProfile()}updateUser()}).catch(console.error);
+  client.auth.getSession().then(async({data})=>{currentSession=data.session||null;currentUser=data.session?.user||null;if(currentUser){await refreshProfile();listenReviews();await loadTrips();if(!String(profile?.name||'').trim())await ensureProfile()}updateUser()}).catch(console.error);
   document.getElementById('loginBtn')?.addEventListener('click',e=>{e.preventDefault();window.login()});
   function sendMyraBootstrap(target=document.getElementById('myra-panel')?.contentWindow){
     if(!target)return;
