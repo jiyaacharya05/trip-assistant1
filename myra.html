@@ -199,27 +199,34 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
   }
   async function callMyra(action,payload={}){
     const cfg=myraConfig();
+    if(!cfg)throw myraError('Myra’s AI is not connected: the page could not load its Supabase settings (supabase-config.js). Refresh the page and try again.','config');
     const body=JSON.stringify({action,...payload});
-    const auth=cfg?.token?{Authorization:'Bearer '+cfg.token}:{};
-    let res=null,route='proxy';
-    /* 1) Same-origin app server (/api/myra): avoids any cross-site blocking in previews.
-       2) If there is no app server (static hosting), call Supabase directly. */
+    const auth=cfg.token?{Authorization:'Bearer '+cfg.token}:{};
+    let res=null,route='direct',directError=null;
+    /* AI Studio and static previews should call the deployed Supabase function directly.
+       Use the same-origin app server only when direct network/CORS access is unavailable. */
     try{
-      console.log('[Myra] sending',action,'via /api/myra');
-      res=await postJson('/api/myra',{'Content-Type':'application/json',...auth},body,25000);
-      const type=res.headers.get('content-type')||'';
-      if(res.status===404||res.status===405||!type.includes('json'))res=null;
-    }catch(err){if(err.code==='timeout')throw err;res=null}
-    if(!res){
-      route='direct';
-      if(!cfg)throw myraError('Myra’s AI is not connected: the page could not load its Supabase settings (supabase-config.js). Refresh the page and try again.','config');
       console.log('[Myra] sending',action,'directly to Supabase');
       res=await postJson(cfg.url+'/functions/v1/myra-chat',{'Content-Type':'application/json',apikey:cfg.key,...auth},body,25000);
+    }catch(err){
+      directError=err;
+      console.warn('[Myra] direct Supabase request failed; trying /api/myra fallback',err);
+      try{
+        route='proxy';
+        res=await postJson('/api/myra',{'Content-Type':'application/json',...auth},body,25000);
+      }catch(proxyError){
+        if(directError.code==='timeout'||proxyError.code==='timeout')throw myraError('Myra is taking longer than expected. Please try again.','timeout');
+        throw myraError('Myra could not reach its chat service. Check the Supabase URL, anon key, and myra-chat Edge Function settings, then try again.','network');
+      }
+    }
+    const type=res.headers.get('content-type')||'';
+    if(route==='proxy'&&(res.status===404||res.status===405||!type.includes('json'))){
+      throw myraError('Myra could not reach its chat service. Check the Supabase URL, anon key, and myra-chat Edge Function settings, then try again.','network');
     }
     console.log('[Myra] status',res.status,'('+route+')');
     let data=null;try{data=await res.json()}catch{}
     if(res.status===404)throw myraError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed');
-    if((res.status===401||res.status===403)&&cfg?.token&&action!=='save_plan'&&action!=='create_booking'){
+    if((res.status===401||res.status===403)&&cfg.token&&action!=='save_plan'&&action!=='create_booking'){
       /* Stale sign-in token: retry once as a guest. */
       const retry=await postJson(route==='proxy'?'/api/myra':cfg.url+'/functions/v1/myra-chat',route==='proxy'?{'Content-Type':'application/json'}:{'Content-Type':'application/json',apikey:cfg.key},body,25000).catch(()=>null);
       const b=retry&&retry.ok?await retry.json().catch(()=>null):null;
