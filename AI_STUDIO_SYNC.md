@@ -1,20 +1,26 @@
 # Sync this repo into Google AI Studio
 
-Google AI Studio can push to GitHub but cannot pull from it. To bring the
-latest GitHub code into the AI Studio app, paste this into AI Studio Chat:
+Google AI Studio can push to GitHub but cannot pull from it. Paste this into AI Studio Chat to copy the latest GitHub code into the app:
 
 ```
-Replace these files in this app with the exact latest versions from GitHub (public repo jiyaacharya05/trip-assistant1, branch main). Use your terminal:
+Sync this app with my GitHub repo. The GitHub version is the fixed, tested one; make this app's files match it exactly.
 
-curl -fsSL -o myra.html        https://raw.githubusercontent.com/jiyaacharya05/trip-assistant1/main/myra.html
-curl -fsSL -o supabase-app.js  https://raw.githubusercontent.com/jiyaacharya05/trip-assistant1/main/supabase-app.js
-curl -fsSL -o login.html       https://raw.githubusercontent.com/jiyaacharya05/trip-assistant1/main/login.html
-curl -fsSL -o login.js         https://raw.githubusercontent.com/jiyaacharya05/trip-assistant1/main/login.js
-curl -fsSL -o assets/login-ocean-sunset.jpg https://raw.githubusercontent.com/jiyaacharya05/trip-assistant1/main/assets/login-ocean-sunset.jpg
+git clone --depth 1 https://github.com/jiyaacharya05/trip-assistant1.git /tmp/ta-sync
+(if /tmp/ta-sync already exists, delete it first)
 
-Rules: do not edit these files after downloading. Keep server.js, index.html and supabase-config.js. Update the ?v= on supabase-app.js in index.html and myra.html to a new value, rebuild dist/ (node build.js), and reload the Preview.
-Then, SIGNED IN with the demo account, open Myra and send "Is October a good month for the Kerala backwaters?". Report exactly what Myra shows and every console line starting with [Myra].
-If curl cannot reach raw.githubusercontent.com, tell me the exact error and stop.
+Copy these from /tmp/ta-sync into this app, replacing what is here:
+index.html, myra.html, login.html, login.js, supabase-app.js, supabase-config.js, server.js, the whole assets/ folder and the whole supabase/ folder.
+
+Rules:
+1. Do NOT edit any copied file afterwards. No reformatting, merging or "improvements".
+2. server.js from GitHub replaces the old one. It has no dependencies: it serves the site (from dist/ if dist/index.html exists, otherwise the app folder) and adds POST /api/myra, which forwards Myra's chat to the Supabase Edge Function from the server. Make sure package.json runs "node server.js" for dev and start.
+3. Keep build.js and package.json. Rebuild dist/ (node build.js) so dist/ has the same files, then restart the server and reload the Preview.
+If git clone cannot reach github.com, tell me the exact error and stop.
+
+Test INSIDE the Preview, signed in with the demo account:
+a) "Is October a good month for the Kerala backwaters?"
+b) "Plan a 3-day trip to Goa for 2 friends, 12 to 14 December, budget ₹20,000, relaxed pace."
+Report what Myra shows and every console line starting with [Myra] (they say "via /api/myra" or "directly to Supabase").
 ```
 
 Do not use "Force push" from AI Studio until Myra works there: it would overwrite the fixed GitHub code.

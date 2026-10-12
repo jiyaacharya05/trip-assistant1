@@ -190,34 +190,51 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     }catch{}
     return {url,key,token};
   }
+  /* One request with a timeout. Returns the Response, or throws a MyraBackendError. */
+  async function postJson(url,headers,body,ms){
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),ms);
+    try{return await fetch(url,{method:'POST',headers,body,signal:controller.signal})}
+    catch(err){throw err?.name==='AbortError'?myraError('Myra’s server did not answer in time. Please try again.','timeout'):myraError('Myra could not reach the server. Check your internet connection and try again.','network')}
+    finally{clearTimeout(timer)}
+  }
   async function callMyra(action,payload={}){
     const cfg=myraConfig();
-    if(!cfg)throw myraError('Myra’s AI is not connected: the page could not load its Supabase settings (supabase-config.js). Refresh the page and try again.','config');
-    const headers={'Content-Type':'application/json',apikey:cfg.key};
-    if(cfg.token)headers.Authorization='Bearer '+cfg.token;
-    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
-    let res;
-    try{console.log('[Myra] sending',action);res=await fetch(cfg.url+'/functions/v1/myra-chat',{method:'POST',headers,body:JSON.stringify({action,...payload}),signal:controller.signal})}
-    catch(err){console.warn('[Myra] request failed',err);throw err?.name==='AbortError'?myraError('Myra’s server did not answer within 30 seconds. Please try again.','timeout'):myraError('Myra could not reach the server. Check your internet connection and try again.','network')}
-    finally{clearTimeout(timer)}
-    console.log('[Myra] status',res.status);
-    let body=null;try{body=await res.json()}catch{}
-    if(res.status===404)throw myraError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed');
-    if(res.status===401||res.status===403){
-      if(cfg.token&&action!=='save_plan'&&action!=='create_booking'){ // stale sign-in token: retry once as a guest
-        const retry=await fetch(cfg.url+'/functions/v1/myra-chat',{method:'POST',headers:{'Content-Type':'application/json',apikey:cfg.key},body:JSON.stringify({action,...payload})}).catch(()=>null);
-        if(retry&&retry.ok){const b=await retry.json().catch(()=>null);if(b&&b.ok!==false&&!b.error)return b}
-      }
-      throw myraError(body?.error||body?.msg||'Supabase rejected the request. In Supabase, open Edge Functions → myra-chat and turn OFF “Verify JWT”, then try again.','auth');
+    const body=JSON.stringify({action,...payload});
+    const auth=cfg?.token?{Authorization:'Bearer '+cfg.token}:{};
+    let res=null,route='proxy';
+    /* 1) Same-origin app server (/api/myra): avoids any cross-site blocking in previews.
+       2) If there is no app server (static hosting), call Supabase directly. */
+    try{
+      console.log('[Myra] sending',action,'via /api/myra');
+      res=await postJson('/api/myra',{'Content-Type':'application/json',...auth},body,25000);
+      const type=res.headers.get('content-type')||'';
+      if(res.status===404||res.status===405||!type.includes('json'))res=null;
+    }catch(err){if(err.code==='timeout')throw err;res=null}
+    if(!res){
+      route='direct';
+      if(!cfg)throw myraError('Myra’s AI is not connected: the page could not load its Supabase settings (supabase-config.js). Refresh the page and try again.','config');
+      console.log('[Myra] sending',action,'directly to Supabase');
+      res=await postJson(cfg.url+'/functions/v1/myra-chat',{'Content-Type':'application/json',apikey:cfg.key,...auth},body,25000);
     }
-    if(!res.ok)throw myraError(body?.error||body?.message||`Myra’s backend returned an error (${res.status}). Please try again.`,body?.code||'server');
-    if(!body)throw myraError('Myra’s backend sent an empty reply. Please try again.','server');
-    if(body.fallback)throw myraError('Myra’s AI service did not respond. Please try again.','ai_unavailable');
-    if(body.ok===false||body.error)throw myraError(body.error||'The request could not be completed.',body.code||'server');
-    return body;
+    console.log('[Myra] status',res.status,'('+route+')');
+    let data=null;try{data=await res.json()}catch{}
+    if(res.status===404)throw myraError('Myra’s backend (the myra-chat Edge Function) is not deployed in Supabase yet.','not_deployed');
+    if((res.status===401||res.status===403)&&cfg?.token&&action!=='save_plan'&&action!=='create_booking'){
+      /* Stale sign-in token: retry once as a guest. */
+      const retry=await postJson(route==='proxy'?'/api/myra':cfg.url+'/functions/v1/myra-chat',route==='proxy'?{'Content-Type':'application/json'}:{'Content-Type':'application/json',apikey:cfg.key},body,25000).catch(()=>null);
+      const b=retry&&retry.ok?await retry.json().catch(()=>null):null;
+      if(b&&b.ok!==false&&!b.error&&!b.fallback)return b;
+    }
+    if(res.status===401||res.status===403)throw myraError(data?.error||data?.msg||'Supabase rejected the request. In Supabase, open Edge Functions → myra-chat and turn OFF “Verify JWT”, then try again.','auth');
+    if(!res.ok)throw myraError(data?.error||data?.message||`Myra’s backend returned an error (${res.status}). Please try again.`,data?.code||'server');
+    if(!data)throw myraError('Myra’s backend sent an empty reply. Please try again.','server');
+    if(data.fallback)throw myraError('Myra’s AI service did not respond. Please try again.','ai_unavailable');
+    if(data.ok===false||data.error)throw myraError(data.error||'The request could not be completed.',data.code||'server');
+    console.log('[Myra] got reply');
+    return data;
   }
   /* Safety net: the typing indicator can never stay forever. */
-  function watchdog(el,retry){return setTimeout(()=>{if(el.isConnected){el.remove();backendError(myraError('Myra did not get a reply in 40 seconds. Please try again.','timeout'),retry)}},40000)}
+  function watchdog(el,retry){return setTimeout(()=>{if(el.isConnected){el.remove();backendError(myraError('Myra did not get a reply in 60 seconds. Please try again.','timeout'),retry)}},60000)}
   function addWhy(status,explanation){
     if(status==='Rejected')return '';
     return `<div class="notice" style="margin:12px 0"><b>Why this plan</b><br>${status==='Approved'?esc(explanation||''):'Being reviewed by our team'}</div>`;
