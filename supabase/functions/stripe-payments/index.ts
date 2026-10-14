@@ -12,8 +12,18 @@ const json = (data: unknown, status = 200, origin = "") =>
   new Response(JSON.stringify(data), { status, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } });
 const allowedOrigins = () => {
   const configured = (Deno.env.get("APP_ALLOWED_ORIGINS") || "").split(",").map(v => v.trim()).filter(Boolean);
-  return new Set(["https://tripassistant.ai.studio","https://trip-assistant-dusky.vercel.app","http://localhost:8080","http://127.0.0.1:8080","http://localhost:3000","http://127.0.0.1:3000",...configured]);
+  return new Set(["https://tripassistant.ai.studio","https://aistudio.google.com","https://trip-assistant-dusky.vercel.app","http://localhost:8080","http://127.0.0.1:8080","http://localhost:3000","http://127.0.0.1:3000",...configured]);
 };
+function isAllowedOrigin(origin: string, allowed: Set<string>) {
+  if (allowed.has(origin)) return true;
+  try {
+    const url = new URL(origin);
+    // Google AI Studio can serve previews from a generated subdomain.
+    return url.protocol === "https:" && (url.hostname.endsWith(".aistudio.google.com") || url.hostname.endsWith(".aistudio.googleusercontent.com"));
+  } catch {
+    return false;
+  }
+}
 function safeDetails(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const parsed = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
@@ -27,10 +37,13 @@ Deno.serve(async (req: Request) => {
   const allowed = allowedOrigins();
   const isWebhook = req.headers.has("stripe-signature");
   if (req.method === "OPTIONS") {
-    if (!allowed.has(origin)) return new Response("Origin not allowed", { status: 403 });
+    if (!isAllowedOrigin(origin, allowed)) {
+      console.warn("Blocked Stripe checkout preflight origin:", origin || "(missing)");
+      return new Response("Origin not allowed", { status: 403 });
+    }
     return new Response("ok", { headers: corsHeaders(origin) });
   }
-  if (origin && !allowed.has(origin)) return json({ error: "This website origin is not allowed for checkout." }, 403, origin);
+  if (origin && !isAllowedOrigin(origin, allowed)) return json({ error: "This website origin is not allowed for checkout." }, 403, origin);
   if (!isWebhook && req.method !== "POST") return json({ error: "Method not allowed." }, 405, origin);
 
   const stripeSecret = Deno.env.get("STRIPE_SECRET_KEY");
@@ -152,7 +165,7 @@ Deno.serve(async (req: Request) => {
         pending = data;
       }
       const siteOrigin = origin || Deno.env.get("APP_BASE_URL") || "";
-      if (!siteOrigin || !allowed.has(siteOrigin)) {
+      if (!siteOrigin || !isAllowedOrigin(siteOrigin, allowed)) {
         await admin.from("bookings").delete().eq("id", pending.id).eq("user_id", user.id);
         return json({ error: "Add your published website origin to APP_ALLOWED_ORIGINS in Supabase secrets." }, 400, origin);
       }
@@ -165,7 +178,7 @@ Deno.serve(async (req: Request) => {
         session = await stripe.checkout.sessions.create({
           mode: "payment", client_reference_id: pending.id, customer_email: user.email || undefined,
           line_items: [{ quantity: 1, price_data: { currency: currency.toLowerCase(), unit_amount: stripeAmountMinor, product_data: { name: productName, description: productDescription } } }],
-          success_url: successUrl, cancel_url: cancelUrl, payment_method_types: ["card"], wallet_options: { link: { display: "never" } }, metadata: { booking_id: pending.id, user_id: user.id, currency, stripe_amount_minor: String(stripeAmountMinor) },
+          success_url: successUrl, cancel_url: cancelUrl, payment_method_types: currency === "INR" ? ["card", "upi"] : ["card"], wallet_options: { link: { display: "never" } }, metadata: { booking_id: pending.id, user_id: user.id, currency, stripe_amount_minor: String(stripeAmountMinor) },
           integration_identifier: "trip-assistant-" + idempotencyKey.replace(/[^a-z0-9]/gi, "").slice(-8).toLowerCase().padStart(8, "x"),
         }, { idempotencyKey });
       } catch (error) {
