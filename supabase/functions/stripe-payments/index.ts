@@ -21,7 +21,6 @@ function safeDetails(value: unknown): Record<string, unknown> {
   return parsed;
 }
 const bookingReference = () => "TA-" + crypto.randomUUID().slice(0, 8).toUpperCase();
-const randomLabel = () => Array.from({ length: 8 }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join("");
 
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin") || "";
@@ -114,11 +113,34 @@ Deno.serve(async (req: Request) => {
         if (error) throw error;
         if (!itinerary) itineraryId = null;
       }
-      const { data: pending, error: insertError } = await admin.from("bookings").insert({
-        user_id: user.id, itinerary_id: itineraryId, booking_ref: bookingReference(), total_inr: total,
-        details_json: { ...details, idempotency_key: idempotencyKey, status: "Payment pending", payment_status: "pending", payment_provider: "Stripe", currency: "INR" },
-      }).select("id,booking_ref,total_inr,details_json").single();
-      if (insertError) throw insertError;
+      const { data: recent, error: recentError } = await admin.from("bookings").select("id,booking_ref,total_inr,details_json")
+        .eq("user_id", user.id).order("created_at", { ascending: false }).limit(40);
+      if (recentError) throw recentError;
+      const prior = (recent || []).find((row: any) => row.details_json?.idempotency_key === idempotencyKey);
+      let pending: any;
+      if (prior) {
+        if (Number(prior.total_inr) !== total) return json({ error: "This checkout key is already linked to a different amount." }, 409, origin);
+        const priorSessionId = prior.details_json?.stripe_session_id;
+        if (priorSessionId) {
+          const priorSession = await stripe.checkout.sessions.retrieve(String(priorSessionId));
+          if (priorSession.payment_status === "paid") {
+            const paid = await recordPaid(priorSession, user.id);
+            return json({ ...paid, already_paid: true }, 200, origin);
+          }
+          if (priorSession.status === "open" && priorSession.url) {
+            return json({ url: priorSession.url, session_id: priorSession.id, booking_ref: prior.booking_ref }, 200, origin);
+          }
+          return json({ error: "The previous checkout expired. Start the booking again to create a fresh payment." }, 409, origin);
+        }
+        pending = prior;
+      } else {
+        const { data, error: insertError } = await admin.from("bookings").insert({
+          user_id: user.id, itinerary_id: itineraryId, booking_ref: bookingReference(), total_inr: total,
+          details_json: { ...details, idempotency_key: idempotencyKey, status: "Payment pending", payment_status: "pending", payment_provider: "Stripe", currency: "INR" },
+        }).select("id,booking_ref,total_inr,details_json").single();
+        if (insertError) throw insertError;
+        pending = data;
+      }
       const siteOrigin = origin || Deno.env.get("APP_BASE_URL") || "";
       if (!siteOrigin || !allowed.has(siteOrigin)) {
         await admin.from("bookings").delete().eq("id", pending.id).eq("user_id", user.id);
@@ -134,7 +156,7 @@ Deno.serve(async (req: Request) => {
           mode: "payment", client_reference_id: pending.id, customer_email: user.email || undefined,
           line_items: [{ quantity: 1, price_data: { currency: "inr", unit_amount: total * 100, product_data: { name: productName, description: productDescription } } }],
           success_url: successUrl, cancel_url: cancelUrl, metadata: { booking_id: pending.id, user_id: user.id },
-          integration_identifier: "trip-assistant-" + randomLabel(),
+          integration_identifier: "trip-assistant-" + idempotencyKey.replace(/[^a-z0-9]/gi, "").slice(-8).toLowerCase().padStart(8, "x"),
         }, { idempotencyKey });
       } catch (error) {
         await admin.from("bookings").delete().eq("id", pending.id).eq("user_id", user.id);
