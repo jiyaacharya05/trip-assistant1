@@ -98,7 +98,7 @@
     if(data?.error)throw new Error(data.error);
     if(data?.paid){await loadTrips();toast('This booking is already paid. It is available in My Trips.');return data}
     if(!data?.url)throw new Error('Stripe did not return a checkout link.');
-    window.top.location.assign(data.url);
+    window.top.window.location.href=data.url;
     return data;
   }
   async function verifyStripeCheckout(sessionId){
