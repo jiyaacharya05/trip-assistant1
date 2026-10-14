@@ -50,10 +50,12 @@ Deno.serve(async (req: Request) => {
       .select("id,user_id,booking_ref,total_inr,details_json").eq("id", bookingId).eq("user_id", userId).maybeSingle();
     if (readError) throw readError;
     if (!booking) throw new Error("The pending booking could not be found.");
-    if (session.currency !== "inr" || Number(session.amount_total) !== Number(booking.total_inr) * 100) throw new Error("The paid amount does not match the booking total.");
+    const storedCurrency = String((booking.details_json as Record<string, unknown>)?.currency || "INR").toLowerCase();
+    const expectedMinor = Number((booking.details_json as Record<string, unknown>)?.stripe_amount_minor || Number(booking.total_inr) * 100);
+    if (session.currency !== storedCurrency || Number(session.amount_total) !== expectedMinor) throw new Error("The paid amount does not match the booking total.");
     const previous = booking.details_json && typeof booking.details_json === "object" ? booking.details_json as Record<string, unknown> : {};
     const intent = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null;
-    const updated = { ...previous, status: "Confirmed", payment_status: "paid", payment_provider: "Stripe", currency: "INR",
+    const updated = { ...previous, status: "Confirmed", payment_status: "paid", payment_provider: "Stripe", currency: storedCurrency.toUpperCase(),
       stripe_session_id: session.id, stripe_payment_intent_id: intent, paid_at: new Date().toISOString() };
     const { error: updateError } = await admin.from("bookings").update({ details_json: updated }).eq("id", booking.id).eq("user_id", userId);
     if (updateError) throw updateError;
@@ -105,6 +107,14 @@ Deno.serve(async (req: Request) => {
     if (action === "create_checkout") {
       const total = Number(body.total_inr);
       if (!Number.isSafeInteger(total) || total < 1 || total > 10000000) return json({ error: "The booking amount is invalid." }, 422, origin);
+      const currency = String(body.currency || "INR").toUpperCase();
+      const currencyFactors: Record<string, number> = { INR:1, USD:.012, EUR:.011, GBP:.0094, AUD:.018, CAD:.016, NZD:.020, AED:.044, SAR:.045, QAR:.044, SGD:.016, MYR:.050, THB:.44, IDR:185, JPY:1.78, KRW:16.6, CNY:.086, HKD:.094, CHF:.010, ZAR:.22 };
+      const factor = currencyFactors[currency];
+      if (!factor) return json({ error: "This display currency is not supported for Stripe checkout." }, 422, origin);
+      const displayMajor = Math.round(total * factor);
+      const zeroDecimal = new Set(["JPY", "KRW"]);
+      const stripeAmountMinor = zeroDecimal.has(currency) ? displayMajor : displayMajor * 100;
+      if (!Number.isSafeInteger(stripeAmountMinor) || stripeAmountMinor < 1) return json({ error: "The converted booking amount is too small for Stripe." }, 422, origin);
       const details = safeDetails(body.details);
       const idempotencyKey = String(body.idempotency_key || details.idempotency_key || crypto.randomUUID()).slice(0, 120);
       let itineraryId = typeof body.itinerary_id === "string" ? body.itinerary_id : null;
@@ -119,7 +129,7 @@ Deno.serve(async (req: Request) => {
       const prior = (recent || []).find((row: any) => row.details_json?.idempotency_key === idempotencyKey);
       let pending: any;
       if (prior) {
-        if (Number(prior.total_inr) !== total) return json({ error: "This checkout key is already linked to a different amount." }, 409, origin);
+        if (Number(prior.total_inr) !== total || String(prior.details_json?.currency || "INR").toUpperCase() !== currency) return json({ error: "This checkout key is already linked to a different amount or currency." }, 409, origin);
         const priorSessionId = prior.details_json?.stripe_session_id;
         if (priorSessionId) {
           const priorSession = await stripe.checkout.sessions.retrieve(String(priorSessionId));
@@ -136,7 +146,7 @@ Deno.serve(async (req: Request) => {
       } else {
         const { data, error: insertError } = await admin.from("bookings").insert({
           user_id: user.id, itinerary_id: itineraryId, booking_ref: bookingReference(), total_inr: total,
-          details_json: { ...details, idempotency_key: idempotencyKey, status: "Payment pending", payment_status: "pending", payment_provider: "Stripe", currency: "INR" },
+          details_json: { ...details, idempotency_key: idempotencyKey, status: "Payment pending", payment_status: "pending", payment_provider: "Stripe", currency, stripe_amount_minor: stripeAmountMinor }, 
         }).select("id,booking_ref,total_inr,details_json").single();
         if (insertError) throw insertError;
         pending = data;
@@ -154,8 +164,8 @@ Deno.serve(async (req: Request) => {
       try {
         session = await stripe.checkout.sessions.create({
           mode: "payment", client_reference_id: pending.id, customer_email: user.email || undefined,
-          line_items: [{ quantity: 1, price_data: { currency: "inr", unit_amount: total * 100, product_data: { name: productName, description: productDescription } } }],
-          success_url: successUrl, cancel_url: cancelUrl, metadata: { booking_id: pending.id, user_id: user.id },
+          line_items: [{ quantity: 1, price_data: { currency: currency.toLowerCase(), unit_amount: stripeAmountMinor, product_data: { name: productName, description: productDescription } } }],
+          success_url: successUrl, cancel_url: cancelUrl, payment_method_types: ["card"], wallet_options: { link: { display: "never" } }, metadata: { booking_id: pending.id, user_id: user.id, currency, stripe_amount_minor: String(stripeAmountMinor) },
           integration_identifier: "trip-assistant-" + idempotencyKey.replace(/[^a-z0-9]/gi, "").slice(-8).toLowerCase().padStart(8, "x"),
         }, { idempotencyKey });
       } catch (error) {
