@@ -87,13 +87,13 @@
     const d=details||{},norm=v=>String(v??'').trim().toLowerCase();
     return JSON.stringify([norm(d.service||d.hotel||d.name),norm(d.category),norm(d.from),norm(d.to),norm(d.destination),norm(d.date||d.check_in),norm(d.check_out||d.return_date||d.returnDate),norm(d.room),norm(d.name||d.guest),Math.round(Number(total)||0)]);
   };
-  async function startStripeCheckout(details,total,itineraryId=null,idempotencyKey=null){
+  async function startStripeCheckout(details,total,itineraryId=null,idempotencyKey=null,currencyCode=null){
     if(!currentUser){askLogin('Please sign in before paying for a booking.');throw new Error('Sign-in required');}
     const amount=Math.round(Number(total)||0);
     if(amount<1)throw new Error('The payment amount must be greater than ₹0.');
     const key=idempotencyKey||details?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||'ta-'+Date.now());
     const safeDetails={...(details||{}),idempotency_key:key,status:'Payment pending',payment_status:'pending',payment_provider:'Stripe'};
-    const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'create_checkout',details:safeDetails,total_inr:amount,itinerary_id:itineraryId,idempotency_key:key}});
+    const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'create_checkout',details:safeDetails,total_inr:amount,currency:String(currencyCode||safeDetails.currency||'INR').toUpperCase(),itinerary_id:itineraryId,idempotency_key:key}});
     if(error){let message=error.message;try{const detail=await error.context?.json();message=detail?.error||message}catch{}throw new Error(message)}
     if(data?.error)throw new Error(data.error);
     if(data?.paid){await loadTrips();toast('This booking is already paid. It is available in My Trips.');return data}
