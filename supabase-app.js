@@ -87,19 +87,28 @@
     const d=details||{},norm=v=>String(v??'').trim().toLowerCase();
     return JSON.stringify([norm(d.service||d.hotel||d.name),norm(d.category),norm(d.from),norm(d.to),norm(d.destination),norm(d.date||d.check_in),norm(d.check_out||d.return_date||d.returnDate),norm(d.room),norm(d.name||d.guest),Math.round(Number(total)||0)]);
   };
-  async function startStripeCheckout(details,total,itineraryId=null,idempotencyKey=null,currencyCode=null){
+  async function startStripeCheckout(details,totalInr,itineraryId=null,idempotencyKey=null,currencyCode=null){
     if(!currentUser){askLogin('Please sign in before paying for a booking.');throw new Error('Sign-in required');}
-    const amount=Math.round(Number(total)||0);
+    const amount=Math.round(Number(totalInr)||0);
     if(amount<1)throw new Error('The payment amount must be greater than ₹0.');
     const key=idempotencyKey||details?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||'ta-'+Date.now());
     const safeDetails={...(details||{}),idempotency_key:key,status:'Payment pending',payment_status:'pending',payment_provider:'Stripe'};
-    const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'create_checkout',details:safeDetails,total_inr:amount,currency:String(currencyCode||safeDetails.currency||'INR').toUpperCase(),itinerary_id:itineraryId,idempotency_key:key}});
-    if(error){let message=error.message;try{const detail=await error.context?.json();message=detail?.error||message}catch{}throw new Error(message)}
-    if(data?.error)throw new Error(data.error);
-    if(data?.paid){await loadTrips();toast('This booking is already paid. It is available in My Trips.');return data}
-    if(!data?.url)throw new Error('Stripe did not return a checkout link.');
-    window.top.window.location.href=data.url;
-    return data;
+    for(const field of Object.keys(safeDetails))if(/card|cvc|cvv|password|bank.?account|upi.?pin|payment.?token/i.test(field))delete safeDetails[field];
+    // AI Studio embeds the app in a cross-origin frame. Create a new tab while
+    // the user gesture is active, then direct that tab to Stripe after the API call.
+    let checkoutTab=null;try{checkoutTab=window.open('about:blank','_blank')}catch{}
+    try{
+      const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'create_checkout',details:safeDetails,total_inr:amount,currency:String(currencyCode||safeDetails.currency||activeLocale?.code||'INR').toUpperCase(),itinerary_id:itineraryId,idempotency_key:key}});
+      if(error){let message=error.message;try{const detail=await error.context?.json();message=detail?.error||message}catch{}throw new Error(message)}
+      if(data?.error)throw new Error(data.error);
+      if(data?.paid){try{if(checkoutTab&&!checkoutTab.closed)checkoutTab.close()}catch{}await loadTrips();toast('This booking is already paid. It is available in My Trips.');return data;}
+      if(!data?.url)throw new Error('Stripe did not return a checkout link.');
+      const checkoutUrl=new URL(data.url);
+      if(checkoutUrl.protocol!=='https:'||checkoutUrl.hostname!=='checkout.stripe.com')throw new Error('Stripe returned an unexpected checkout address.');
+      if(checkoutTab&&!checkoutTab.closed){checkoutTab.location.href=checkoutUrl.href;return data;}
+      modal('Continue to secure payment',`<p>Your secure checkout is ready. Open Stripe in a new tab to complete payment.</p><a class="blue" style="display:inline-flex;align-items:center;justify-content:center;margin-top:14px;text-decoration:none" href="${esc2(checkoutUrl.href)}" target="_blank" rel="noopener noreferrer">CONTINUE TO STRIPE</a>`);
+      return data;
+    }catch(error){try{if(checkoutTab&&!checkoutTab.closed)checkoutTab.close()}catch{}throw error;}
   }
   async function verifyStripeCheckout(sessionId){
     if(!currentUser||!sessionId)return null;
