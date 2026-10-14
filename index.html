@@ -313,7 +313,7 @@ hotelDocument=function(data){
       '<header><div style="display:flex;align-items:center;gap:15px"><button class="back-results" type="button" onclick="goBackToResults()" aria-label="Back to search results">← BACK TO RESULTS</button><div class="logo">Trip Assistant</div></div><span>Hotel Details · Independent demo</span></header>'
     )
     .replace('</style>','.back-results{background:#ffffff1c;color:#fff;border:1px solid #ffffff55;border-radius:20px;padding:9px 14px;font-size:11px;font-weight:900;letter-spacing:.15px;white-space:nowrap}.back-results:hover{background:#ffffff30}.back-results:focus{outline:2px solid #fff;outline-offset:2px}@media(max-width:700px){header{padding:16px 12px;gap:8px}.back-results{padding:8px 10px;font-size:10px}.logo{font-size:20px}header span{font-size:11px}}</style>')
-    .replace('</body>','<script>function goBackToResults(){if(window.opener&&!window.opener.closed){window.close();return}if(history.length>1){history.back();return}window.close()}<\\/script></body>');
+    .replace('</body>',`<script>function goBackToResults(){const returnUrl=${JSON.stringify(data?.search?.returnUrl||'').replaceAll('<','\\u003c')};try{if(window.opener&&!window.opener.closed){window.opener.focus();window.close();if(window.closed)return}}catch(error){}if(returnUrl&&returnUrl!==location.href){location.replace(returnUrl);return}if(history.length>1){history.back();return}location.assign('/') }${'<'+ '/script>'}</body>`);
 };
 openHotelTab=function(id){
   const r=state.results[id],s=state.search;
@@ -453,11 +453,10 @@ renderResults=function(){
    hand-written city list and applies equally to Hotels and Villas/Homestays. */
 const verifiedHotelPhotoPool=[...new Set(Object.values(verifiedDestinationHotelPhotos).flat())];
 const verifiedVillaPhotoPool=[
+  /* Use villa/resort photography only; the previous pool mixed hotel bedroom
+     images into villa listings and mapped two missing files to hotel photos. */
   ...([ ...Array.from({length:39},(_,i)=>i+1),...Array.from({length:9},(_,i)=>i+41),...Array.from({length:10},(_,i)=>i+51) ].map(villaAsset)),
   ...assetRange(index=>__canonPath(`assets/villa-curated-${String(index).padStart(2,'0')}.jpg`),1,12),
-  ...([ ...Array.from({length:26},(_,i)=>i+1),...Array.from({length:10},(_,i)=>i+28),...Array.from({length:13},(_,i)=>i+39),...Array.from({length:9},(_,i)=>i+53) ].map(hotelAsset)),
-  ...assetRange(index=>__canonPath(`assets/hotel-curated-${String(index).padStart(2,'0')}.jpg`),1,12),
-  ...assetRange(index=>__canonPath(`assets/web-hotel-${String(index).padStart(2,'0')}.jpg`),1,4)
 ];
 const verifiedHolidayPhotoPool=[...assetRange(index=>__canonPath(`assets/holiday-exclusive-${String(index).padStart(3,'0')}.jpg`),1,60),...assetRange(index=>__canonPath(`assets/holiday-curated-${String(index).padStart(2,'0')}.jpg`),1,12)];
 const propertyPhotoPools={Hotels:verifiedHotelPhotoPool,'Villas & Homestays':verifiedVillaPhotoPool,'Holiday Packages':verifiedHolidayPhotoPool};
@@ -466,7 +465,7 @@ function bundleHash(value){return [...value].reduce((hash,char)=>((hash<<5)-hash
 function propertyPhotoBundle(category,destination,count){
   const pool=propertyPhotoPools[category];
   if(!pool)return [];
-  const storageName='mmt_destination_property_photo_registry_v4';
+  const storageName='mmt_destination_property_photo_registry_v5';
   const destinationKey=destinationRegistryKey(destination),claimKey=`${category}::${destinationKey}`;
   let registry={};
   try{registry=JSON.parse(localStorage.getItem(storageName)||'{}')}catch{}
@@ -488,13 +487,13 @@ buildCatalog=function(category,searchState){
   if(!propertyPhotoPools[category])return results;
   /* The UI presents only twelve cards. Reserving 66 hidden result images was
      what exhausted the pool and caused repeats on later searches. */
-  const visibleCount=Math.min(results.length,12),covers=propertyPhotoBundle(category,searchState.to,visibleCount);
-  if(covers.length!==visibleCount)return results;
-  return results.map((item,index)=>({
-    ...item,
-    img:covers[index%visibleCount],
-    photos:Array.from({length:5},(_,photoIndex)=>covers[(index+photoIndex)%visibleCount])
-  }));
+  const visibleCount=Math.min(results.length,12),photosPerListing=category==='Villas & Homestays'?5:1,
+    reservedCount=visibleCount*photosPerListing,covers=propertyPhotoBundle(category,searchState.to,reservedCount);
+  if(covers.length!==reservedCount)return results;
+  return results.slice(0,visibleCount).map((item,index)=>{
+    const start=(index%visibleCount)*photosPerListing,photos=covers.slice(start,start+photosPerListing);
+    return {...item,img:photos[0],photos:photosPerListing===1?Array.from({length:5},(_,photoIndex)=>covers[(index+photoIndex)%visibleCount]):photos};
+  });
 };
 const renderResultsWithDestinationRegistry=renderResults;
 renderResults=function(){
@@ -690,22 +689,26 @@ hotelDocument=function(data){return hotelDocumentWithVisibleMapCard(data).replac
    file titles replaces the old keyword-random photo endpoint (which sometimes
    returned portraits, vehicles, interiors and unrelated scenery). */
 const holidayPhotoTitles={
-  pune:['Shaniwar Wada, Pune, Mumbai, India.jpg','Aga Khan Palace, Pune, India.png','Sinhagad Fort (31032).jpg','Garden of Shaniwar Wada, Pune.jpg','Shaniwar Wada Fort Pune.jpg'],
+  pune:['Shaniwar Wada, Pune, Mumbai, India.jpg','Aga Khan Palace, Pune, India.png','Sinhagad Fort (31032).jpg','Garden of Shaniwar Wada, Pune.jpg','Pataleshwar Cave Temple Pune.jpg'],
   mumbai:['Gateway of India, Mumbai, India.jpg','Marine Drive Mumbai India.jpg','Elephanta Caves in Mumbai.jpg','Chhatrapati Shivaji Maharaj Terminus, Mumbai city.jpg','Taj Mahal Palace Hotel photo.jpg'],
-  goa:['FortAguada.jpg','Palolem Beach, south Goa.jpg','Anjuna Beach Goa India.JPG','Basilica of Bom Jesus Goa.JPG','Fort Aguada, Goa, India.jpg'],
-  bengaluru:['Vidhansoudha.jpg','Lalbagh, Bengaluru, India.jpg','Bengaluru Palace.jpg','Cubbon Park Bangalore.jpg','Vidhana Soudha , the State Legistlature of Karnataka, Bengaluru, India.jpg'],
-  delhi:["Humayun's Tomb in Delhi, India.jpg",'Qutb Minar, Delhi, India.jpg','Red Fort facade.jpg','India Gate Delhi.jpg','Gate of Qutub Minar.jpg'],
-  jaipur:['Hawa Mahal in Jaipur, Rajasthan.jpg','Amer Fort - Jaipur India.jpg','Jantar Mantar at Jaipur.jpg','Jal Mahal Jaipur.jpg','Hawa mahal from jantar mantar,Jaipur.jpg'],
-  hyderabad:['Golconda Fort , Hyderabad.jpg','Charminar of Hyderabad Telangana.jpg','Chowmahalla Palace Hyderabad India.jpg','Golconda fort, Hyderabad, Telengana.jpg','Chowmahalla palace hyderabad.jpg'],
-  chennai:['The Kapaleeshwarar Temple in Chennai.jpg','Chennai Marina beach.jpg','Marina Beach Chennai India.jpg','Santhome beach by LMB.jpg','Kapaleeshwarar Temple, Mylapore, Chennai, India.jpg'],
-  kolkata:['Howrah Bridge, Kolkata, West Bengal.jpg','Victoria Memorial from left side, Kolkata, India.jpg','Dakshineswar Kali Temple Kolkata.jpg','Victoria memorial kolkata.jpg','Kali Temple Dakshineswar.jpg'],
-  ahmedabad:['Adalaj Stepwell, Ahmedabad, Gujarat, India.jpg','Sidi Saiyyed Mosque Ahmedabad.jpg','Sabarmati Ashram Ahmedabad.jpg','Kankariya lake ahmedabad.jpeg','Adalaj Stepwell-Adalaj Ahmedabad-Gujarat-O0A0201.jpg'],
+  goa:['FortAguada.jpg','Palolem Beach, south Goa.jpg','Anjuna Beach Goa India.JPG','Basilica of Bom Jesus Goa.JPG','Dudhsagar Falls Goa.jpg'],
+  bengaluru:['Vidhansoudha.jpg','Lalbagh, Bengaluru, India.jpg','Bengaluru Palace.jpg','Cubbon Park Bangalore.jpg','ISKCON Temple Bangalore.jpg'],
+  delhi:["Humayun's Tomb in Delhi, India.jpg",'Qutb Minar, Delhi, India.jpg','Red Fort facade.jpg','India Gate Delhi.jpg','Safdarjung tomb main entrance gate.jpg'],
+  jaipur:['Hawa Mahal in Jaipur, Rajasthan.jpg','Amer Fort - Jaipur India.jpg','Jantar Mantar at Jaipur.jpg','Jal Mahal Jaipur.jpg','Jaipur City Palace, Rajasthan.jpg'],
+  hyderabad:['Golconda Fort , Hyderabad.jpg','Charminar of Hyderabad Telangana.jpg','Chowmahalla Palace Hyderabad India.jpg','Birla mandir.jpg','Golconda Fort situated at Hyderabad.jpg'],
+  chennai:['The Kapaleeshwarar Temple in Chennai.jpg','Chennai Marina beach.jpg','Santhome beach by LMB.jpg','Fort St. George, Chennai.jpg','Vivekananda-House-Chennai-India.jpg'],
+  kolkata:['Howrah Bridge, Kolkata, West Bengal.jpg','Victoria Memorial from left side, Kolkata, India.jpg','Dakshineswar Kali Temple Kolkata.jpg','Marble Palace- Kolkata- West Bengal- DSC 0006.jpg','Indian Museum in Kolkata, India.jpg'],
+  ahmedabad:['Adalaj Stepwell, Ahmedabad, Gujarat, India.jpg','Sidi Saiyyed Mosque Ahmedabad.jpg','Sabarmati Ashram Ahmedabad.jpg','Kankariya lake ahmedabad.jpeg','Sabarmati Riverfront Ahmedabad.jpg'],
   sydney:['Sydney opera house and Sydney harbour bridge.jpg','Bondi from above.jpg','Sydney skyline from royal botanical gardens.jpg','Circular quay.jpg','Sydney harbour from botanical gardens.jpg'],
-  kerala:['Allepy Backwaters, Kerala, India.jpg','Munnar tea gardens.jpg','Kerala Backwaters in Kochi.jpg','Tea Gardens in Munnar.jpg','The Backwaters of Alleppey.jpg']
+  kerala:['Allepy Backwaters, Kerala, India.jpg','Munnar tea gardens.jpg','Kerala Backwaters in Kochi.jpg','Athirappilly waterfall, Kerala.jpg','Chinese fishing nets at Fort Kochi.jpg']
 };
 const holidayPhotoUrl=title=>`https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(title)}?width=1200`;
 const holidayPhotoSource=title=>`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(title.replaceAll(' ','_'))}`;
-const holidayCuratedPhotos=Object.fromEntries(Object.entries(holidayPhotoTitles).map(([city,titles])=>[city,titles.map(title=>({title,url:holidayPhotoUrl(title),source:holidayPhotoSource(title)}))]));
+const holidayCuratedPhotos=Object.fromEntries(Object.entries(holidayPhotoTitles).map(([city,titles])=>[city,[...new Map(titles.map(title=>{const photo={title,url:holidayPhotoUrl(title),source:holidayPhotoSource(title)};return [photo.url,photo]})).values()]]));
+/* Google image search cross-checks: use direct Wikimedia file URLs for two
+   destination photos so these cards resolve to the exact named landmarks. */
+holidayCuratedPhotos.goa[1]={title:'Palolem Beach, Goa',url:'https://upload.wikimedia.org/wikipedia/commons/b/b6/Palolem_beach%2C_Goa_-_panoramio.jpg',source:'https://commons.wikimedia.org/wiki/File:Palolem_beach,_Goa_-_panoramio.jpg'};
+holidayCuratedPhotos.ahmedabad[1]={title:'Sidi Saiyyad Mosque, Ahmedabad',url:'https://upload.wikimedia.org/wikipedia/commons/9/93/Front_view_Sidi_saiyad_mosque_ahmedabad.jpg',source:'https://commons.wikimedia.org/wiki/File:Front_view_Sidi_saiyad_mosque_ahmedabad.jpg'};
 const curatedHolidayCatalog=buildCatalog;
 buildCatalog=function(category,searchState){
   const results=curatedHolidayCatalog(category,searchState);
@@ -726,9 +729,9 @@ renderResults=function(){
   document.querySelectorAll('#resultList .result-card').forEach((card,index)=>{
     const item=rows[index],image=card.querySelector('img');
     if(!image||!item)return;
-    if(item.holidayNeedsDestinationImages){image.src=__localPhoto(state.search.to,__phIdx++);image.alt=`${state.search.to} destination photograph`;return;}
+    if(item.holidayNeedsDestinationImages){image.removeAttribute('src');image.alt=`No curated destination photograph is available for ${state.search.to}`;image.classList.add('photo-unavailable');return;}
     image.alt=`${item.holidayPhotoTitles?.[0]?.replace(/\.[^.]+$/,'')||state.search.to} destination photograph`;
-    image.onerror=()=>{image.onerror=null;image.src=__localPhoto(state.search.to,__phIdx++);};
+    image.onerror=()=>{image.onerror=null;image.removeAttribute('src');image.classList.add('photo-unavailable');};
   });
 };
 const detailsWithCuratedHolidaySources=details;
@@ -739,7 +742,7 @@ details=function(id){
   if(!item||!gallery)return;
   gallery.querySelectorAll('img').forEach((image,index)=>{
     image.alt=`${item.holidayPhotoTitles?.[index]?.replace(/\.[^.]+$/,'')||state.search.to} destination photograph`;
-    image.onerror=()=>{image.onerror=null;image.src=__localPhoto(state.search.to,__phIdx++);};
+    image.onerror=()=>{image.onerror=null;image.removeAttribute('src');image.classList.add('photo-unavailable');};
   });
   const credits=(item.holidayPhotoTitles||[]).map((title,index)=>`<a target="_blank" rel="noopener" href="${item.holidayPhotoSources[index]}">${title.replace(/\.[^.]+$/,'')}</a>`).join(' · ');
   gallery.insertAdjacentHTML('afterend',`<p class="holiday-photo-credits">Photo sources &amp; license details: ${credits}</p>`);
@@ -766,7 +769,7 @@ const tourAttractionTitles={
   kerala:['Alleppey Backwaters, Kerala, India.jpg','Munnar tea gardens.jpg','Kerala Backwaters in Kochi.jpg','Athirappilly waterfall, Kerala.jpg'],
   kochi:['Chinese fishing nets at Fort Kochi.jpg','Mattancherry Palace 2025.jpg','St.Francis-Church-Fort-Kochi.jpg','Kerala Folklore Museum in Kochi.jpg','The Hill Palace Museum.jpg','Paradesi Synagogue, Kochi, Kerala 034.jpg','Fort Kochi beach, Kochi ,2026-09-07.jpg','Marine drive kochi.jpg','Cherai Beach Kerala.jpg','Bolgatty Palace.jpg']
 };
-const tourPhotos=Object.fromEntries(Object.entries(tourAttractionTitles).map(([city,titles])=>[city,titles.map(title=>({title,url:holidayPhotoUrl(title),source:holidayPhotoSource(title)}))]));
+const tourPhotos=Object.fromEntries(Object.entries(tourAttractionTitles).map(([city,titles])=>[city,[...new Map(titles.map(title=>{const photo={title,url:holidayPhotoUrl(title),source:holidayPhotoSource(title)};return [photo.url,photo]})).values()]]));
 const catalogBeforeTourAttractions=buildCatalog;
 buildCatalog=function(category,searchState){
   const results=catalogBeforeTourAttractions(category,searchState);
@@ -774,13 +777,12 @@ buildCatalog=function(category,searchState){
   const destination=String(searchState.to||''),localCity=holidayDestinationKey(destination),city=/\b(?:kochi|cochin)\b/i.test(destination)?'kochi':localCity;
   const attractionPhotos=city&&tourPhotos[city];
   if(!attractionPhotos)return results.slice(0,1).map(item=>({...item,img:'',photos:[],tourNeedsDestinationImages:true}));
-  const supplementary=(city==='kochi'?[]:(holidayDestinationImages[localCity]||[])
-    .filter((_,index)=>localCity!=='kerala'||index>0)
-    .slice(0,Math.max(0,10-attractionPhotos.length))
-    .map((url,index)=>({title:`${destination} destination photo ${index+1}`,url,source:''})));
-  const galleryPhotos=[...attractionPhotos,...supplementary].slice(0,10);
+  /* Keep attraction galleries destination-specific and unique. Earlier code
+     filled these galleries with holiday photos, causing repeated/unrelated
+     images across the two sections. */
+  const galleryPhotos=attractionPhotos;
   const activityNames=['Heritage & Culture Walk','Local Museum Visit','Waterfront Discovery','Food & Neighbourhood Tour','Scenic Day Excursion','Evening City Highlights'];
-  return Array.from({length:10},(_,index)=>{
+  return Array.from({length:attractionPhotos.length},(_,index)=>{
     const base=results[index]||{...results[index%results.length],id:index};
     const photo=galleryPhotos[index],attractionName=photo.title.replace(/\.[^.]+$/,'').replace(/[_,-]+/g,' ').replace(/\s+/g,' ').trim();
     const name=index<attractionPhotos.length?`${attractionName} Guided Visit`:`${destination} ${activityNames[(index-attractionPhotos.length)%activityNames.length]}`;
@@ -797,9 +799,9 @@ renderResults=function(){
   document.querySelectorAll('#resultList .result-card').forEach((card,index)=>{
     const item=rows[index],image=card.querySelector('img');
     if(!image||!item)return;
-    if(item.tourNeedsDestinationImages){image.src=__localPhoto(state.search.to,__phIdx++);image.alt=`${state.search.to} attraction photograph`;return;}
+    if(item.tourNeedsDestinationImages){image.removeAttribute('src');image.alt=`No curated attraction photograph is available for ${state.search.to}`;image.classList.add('photo-unavailable');return;}
     image.alt=`${item.tourPhotoTitles?.[item.id]?.replace(/\.[^.]+$/,'')||state.search.to} attraction photograph`;
-    image.onerror=()=>{image.onerror=null;image.src=__localPhoto(state.search.to,__phIdx++);};
+    image.onerror=()=>{image.onerror=null;image.removeAttribute('src');image.classList.add('photo-unavailable');};
   });
 };
 const detailsBeforeTourAttractionSources=details;
