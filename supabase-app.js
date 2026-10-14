@@ -82,10 +82,28 @@
     if(data?.error && !data?.fallback) throw new Error(data.error);
     return data;
   }
-  async function saveBooking(details,total,itineraryId=null){
+  const bookingWrites=new Map();
+  const bookingSignature=(details,total)=>{
+    const d=details||{},norm=v=>String(v??'').trim().toLowerCase();
+    return JSON.stringify([norm(d.service||d.hotel||d.name),norm(d.category),norm(d.from),norm(d.to),norm(d.destination),norm(d.date||d.check_in),norm(d.check_out||d.return_date||d.returnDate),norm(d.room),norm(d.name||d.guest),Math.round(Number(total)||0)]);
+  };
+  async function saveBooking(details,total,itineraryId=null,idempotencyKey=null){
     if(!currentUser){askLogin('Please sign in before confirming a booking.');throw new Error('Sign-in required');}
-    const data=await invoke('create_booking',{details,total_inr:Math.max(0,Math.round(Number(total)||0)),itinerary_id:itineraryId});
-    await loadTrips();return data.booking;
+    const amount=Math.max(0,Math.round(Number(total)||0)),signature=bookingSignature(details,amount);
+    if(bookingWrites.has(signature))return bookingWrites.get(signature);
+    const task=(async()=>{
+      const cutoff=new Date(Date.now()-10*60*1000).toISOString();
+      const {data:recent,error:lookupError}=await client.from('bookings').select('id,booking_ref,details_json,total_inr,created_at').eq('user_id',currentUser.id).gte('created_at',cutoff).order('created_at',{ascending:false}).limit(40);
+      if(lookupError)throw lookupError;
+      const existing=(recent||[]).find(row=>bookingSignature(row.details_json,row.total_inr)===signature);
+      if(existing)return {id:existing.id,booking_ref:existing.booking_ref,created_at:existing.created_at,already_saved:true};
+      const key=idempotencyKey||details?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||'ta-'+Date.now());
+      const safeDetails={...(details||{}),idempotency_key:key};
+      const result=await invoke('create_booking',{details:safeDetails,total_inr:amount,itinerary_id:itineraryId});
+      await loadTrips();return result.booking;
+    })();
+    bookingWrites.set(signature,task);
+    try{return await task}finally{bookingWrites.delete(signature)}
   }
   async function loadTrips(){
     if(!currentUser)return {bookings:[],itineraries:[],requests:[]};
@@ -170,7 +188,7 @@
         const why=it.review_status==='Approved'?'<div class="notice"><b>Why this plan</b><br>'+esc2(it.ai_explanation||'')+'</div>':it.review_status==='Rejected'?'':'<div class="notice"><b>Why this plan</b><br>Being reviewed by our team</div>';
         return '<article class="summary"><h3>'+esc2(req.destination||'Saved trip')+'</h3><p>'+esc2(showDate(req.start_date))+' – '+esc2(showDate(req.end_date))+' · Budget ₹'+Number(req.budget_inr||0).toLocaleString('en-IN')+'</p><p>'+esc2(it.itinerary_summary||'')+'</p><ul>'+renderDays(plan)+'</ul><b>Estimated total: ₹'+Number(plan.total_cost_inr||0).toLocaleString('en-IN')+'</b>'+why+'</article>';
       }).join('');
-      const bookings=data.bookings.map(b=>{
+      const seenBookingSignatures=new Set();const uniqueBookings=data.bookings.filter(b=>{const key=bookingSignature(b.details_json||{},b.total_inr);if(seenBookingSignatures.has(key))return false;seenBookingSignatures.add(key);return true});const bookings=uniqueBookings.map(b=>{
         const d=b.details_json||{},related=data.itineraries.find(it=>it.id===b.itinerary_id),plan=related?.itinerary_json||{};
         const req=related?data.requests.find(r=>r.id===related.trip_request_id)||{}:{};
         const title=d.service||d.hotel||d.name||d.destination||d.to||'Travel booking';
@@ -185,7 +203,9 @@
           ['Travel dates',dateLine||'—'],
           ['Category',d.category||'—'],
           ['Travellers',party?(Array.isArray(party)?party.length+' traveller(s)':esc2(party)+' traveller(s)'):'—'],
-          ['Lead traveller',d.name||'—']
+          ['Lead traveller',d.name||d.guest||'—'],
+          ['Payment method',d.payment_method||'Demo payment'],
+          ['Payment status',d.payment_status||'Simulated · not charged']
         ];
         const detailRows=details.map(item=>'<div style="display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #e8edf3"><span style="color:#68778a">'+item[0]+'</span><b style="text-align:right">'+(item[1]==='—'?'—':esc2(item[1]))+'</b></div>').join('');
         const status=d.status||'Confirmed';
@@ -203,7 +223,7 @@
   window.cancelTrip=async function(i){const b=trips[i];if(!b)return;modal('Cancel Booking',`<p>Cancel ${esc2(b.service||'this booking')}?</p><div class="notice">This demo does not process refunds or contact a travel provider.</div><button class="blue" onclick="window.tripBackend.cancelBooking(${JSON.stringify(b.id)})">CONFIRM CANCELLATION</button>`)};
   window.tripBackend.cancelBooking=async id=>{const {data,error}=await client.from('bookings').select('details_json').eq('id',id).eq('user_id',currentUser.id).single();if(error)throw error;const {error:e}=await client.from('bookings').update({details_json:{...data.details_json,status:'Cancelled'}}).eq('id',id).eq('user_id',currentUser.id);if(e)throw e;await loadTrips();showTrips()};
   const originalConfirm = window.confirmBooking;
-  window.confirmBooking=async function(){const p=state?.pending;if(!p)return;try{if(!currentUser){askLogin('Sign in to save and confirm this booking.');return;}const seats=p.seats?.map((ss,i)=>'Segment '+(i+1)+': '+(ss.join(', ')||'Auto-assigned (demo)')).join(' | ');const details={service:p.r?.name,category:p.s?.category,from:p.s?.from,to:p.s?.to,date:p.s?.date,total:p.total,status:'Confirmed',name:profile?.name||'',email:currentUser.email||'',seats};const b=await saveBooking(details,p.total);modal('✓ Booking Saved',`<div class="summary"><h3>${esc2(b.booking_ref)}</h3><p>${esc2(details.service)} · ${esc2(details.to)}</p><p>${esc2(details.date)} · ₹${Number(p.total).toLocaleString('en-IN')}</p><p>Saved to your Supabase account.</p></div><button class="text-btn" onclick="showTrips()">MY TRIPS</button>`);state.pending=null;}catch(err){if(err.message!=='Sign-in required')toast(err.message||'Could not save booking.')}};
+  window.confirmBooking=async function(){const p=state?.pending;if(!p)return;try{if(!currentUser){askLogin('Sign in to save and confirm this booking.');return;}const seats=p.seats?.map((ss,i)=>'Segment '+(i+1)+': '+(ss.join(', ')||'Auto-assigned (demo)')).join(' | ');const category=p.s?.category||'',isStay=['Hotels','Villas & Homestays'].includes(category),details={service:p.r?.name,category,destination:p.s?.to,from:isStay?undefined:p.s?.from,to:isStay?undefined:p.s?.to,date:p.s?.date,check_in:isStay?p.s?.date:undefined,check_out:isStay?p.s?.returnDate:undefined,nights:isStay?Math.max(1,Math.round((new Date(p.s?.returnDate)-new Date(p.s?.date))/86400000)):undefined,travellers:p.travellers||((p.s?.adults||1)+(p.s?.children||0)),total:p.total,status:'Confirmed (sample)',name:profile?.name||p.name||'',email:currentUser.email||'',seats,payment_method:p.paymentMethod||'UPI (demo)',payment_status:'Simulated · not charged',idempotency_key:p.bookingAttemptId};const b=await saveBooking(details,p.total,null,p.bookingAttemptId);modal('✓ Booking Saved',`<div class="summary"><h3>${esc2(b.booking_ref)}</h3><p>${esc2(details.service)} · ${esc2(details.to)}</p><p>${esc2(details.date)} · ₹${Number(p.total).toLocaleString('en-IN')}</p><p>Saved to your Supabase account.</p></div><button class="text-btn" onclick="showTrips()">MY TRIPS</button>`);state.pending=null;}catch(err){if(err.message!=='Sign-in required')toast(err.message||'Could not save booking.')}};
   const oldSaveItem=window.saveItem;
   window.saveItem=async function(id){const r=state.results[id],item={...r,category:state.search.category,to:state.search.to,from:state.search.from,date:state.search.date,returnDate:state.search.returnDate,adults:state.search.adults,children:state.search.children,trip:state.search.trip,cabin:state.search.cabin,fare:state.search.fare};try{const added=await saveWishlist(item);toast(added?'Saved to your account wishlist.':'Already in your wishlist.')}catch(err){toast(err.message)}};
   window.showWishlist=showWishlist;
