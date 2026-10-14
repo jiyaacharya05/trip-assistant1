@@ -2,3 +2,7 @@
 # This endpoint accepts guest chat requests; it verifies any supplied user JWT
 # itself and requires authentication for save/book actions.
 verify_jwt = false
+
+[functions.stripe-payments]
+# This handler verifies checkout JWTs itself and Stripe signatures for webhooks.
+verify_jwt = false
