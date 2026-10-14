@@ -110,6 +110,39 @@
     const {error}=await client.from('wishlists').insert({user_id:currentUser.id,listing_key:listingKey,listing_json:item});if(error)throw error;await loadTrips();return true;
   }
   async function removeWishlist(item){if(!currentUser)return;const key=[item.name,item.category,item.to].join('|');const {error}=await client.from('wishlists').delete().eq('user_id',currentUser.id).eq('listing_key',key);if(error)throw error;await loadTrips()}
+  async function removeWishlistAt(index){const item=wishItems[index];if(!item)return;try{await removeWishlist(item);showWishlist()}catch(err){toast(err.message||'Could not remove this saved item.')}}
+  function showWishlist(){
+    const cards=wishItems.map((item,index)=>{
+      const image=item.img||item.image||item.photos?.[0]||'';
+      const category=item.category||'Travel';
+      const location=item.to||item.city||'';
+      const price=Number(item.price||0);
+      return `<article style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;background:#f5f8fc;border-radius:10px;padding:12px;margin:12px 0"><button type="button" aria-label="Open ${esc2(item.name||'saved listing')} details" onclick="window.tripBackend.openWishlistItem(${index})" style="display:flex;align-items:center;gap:14px;text-align:left;padding:0;background:transparent;color:inherit;min-width:0"><span style="display:block;flex:0 0 112px;width:112px;height:88px;border-radius:8px;overflow:hidden;background:linear-gradient(135deg,#d6e9f8,#f6d6b9)">${image?`<img src="${esc2(image)}" alt="${esc2(item.name||'Saved travel listing')}" loading="lazy" style="display:block;width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`:''}</span><span style="min-width:0"><strong style="display:block;font-size:16px;line-height:1.35;color:#233448">${esc2(item.name||'Saved listing')}</strong><small style="display:block;margin-top:6px;color:#65758a">${esc2(category)}${location?` · ${esc2(location)}`:''}${price?` · ${money(price)}`:''}</small><small style="display:block;margin-top:7px;color:#1686db;font-weight:700">VIEW DETAILS ↗</small></span></button><button type="button" class="text-btn" onclick="window.tripBackend.removeWishlistAt(${index})" aria-label="Remove ${esc2(item.name||'saved listing')} from wishlist">REMOVE</button></article>`;
+    }).join('');
+    modal('Your Wishlist',cards||'<p>Your wishlist is empty. Save a result to start.</p>');
+  }
+  function openWishlistItem(index){
+    const item=wishItems[index];if(!item)return;
+    const category=item.category||'Hotels';
+    const destination=item.to||item.city||'';
+    const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(String(value||''))&&String(value)>=new Date().toISOString().slice(0,10);
+    const nextDay=()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)};
+    const startDate=validDate(item.date)?item.date:nextDay();
+    let endDate=validDate(item.returnDate)?item.returnDate:(validDate(item.check_out)?item.check_out:'');
+    if(!endDate||endDate<=startDate){const d=new Date(`${startDate}T00:00:00`);d.setDate(d.getDate()+2);endDate=d.toISOString().slice(0,10)}
+    setCategory(category);
+    state.from=item.from||state.from||'Delhi';state.to=destination;state.date=startDate;state.returnDate=endDate;
+    state.adults=Math.max(1,Number(item.adults)||state.adults||1);state.children=Math.max(0,Number(item.children)||state.children||0);
+    if(item.trip)state.trip=item.trip;if(item.cabin)state.cabin=item.cabin;if(item.fare)state.fare=item.fare;
+    renderFields();
+    const fromInput=document.getElementById('from'),toInput=document.getElementById('to'),depart=document.getElementById('depart'),ret=document.getElementById('return');
+    if(fromInput)fromInput.value=state.from;if(toInput)toInput.value=destination;if(depart)depart.value=startDate;if(ret)ret.value=endDate;
+    closeModal();
+    search();
+    const result=(state.results||[]).find(row=>row.name===item.name)||(item.name?(state.results||[]).find(row=>String(row.name||'').toLowerCase().includes(String(item.name).split(' · ')[0].toLowerCase())):null);
+    if(!result){toast(`I couldn't reopen ${item.name||'this listing'} from the current sample inventory.`);return}
+    if(typeof details==='function')details(result.id);
+  }
   function listenReviews(){
     reviewChannel?.unsubscribe(); if(!currentUser)return;
     reviewChannel=client.channel('myra-review-'+currentUser.id).on('postgres_changes',{event:'*',schema:'public',table:'itineraries',filter:`user_id=eq.${currentUser.id}`},async payload=>{
@@ -117,7 +150,7 @@
       if(window.__myTripsOpen)showTrips();
     }).subscribe();
   }
-  window.tripBackend={configured:true,client,getUser:()=>currentUser,getProfile:()=>profile,googleSignIn:signInGoogle,requestCode,verifyCode,askLogin,invoke,saveBooking,loadTrips,saveWishlist,removeWishlist,ensureProfile,async updateProfile(name,mobile){if(!currentUser)throw new Error('Sign in to edit your profile.');const {error}=await client.from('profiles').update({name,mobile,email:currentUser.email||''}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return profile;},async signOut(){await client.auth.signOut();closeModal()},saveLocale:async(country,currency)=>{if(!currentUser)return false;const {error}=await client.from('profiles').update({preferred_country:country,preferred_currency:currency}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return true;},getRecentRequest:async()=>{if(!currentUser)return null;const cutoff=new Date(Date.now()-86400000).toISOString();const {data}=await client.from('trip_requests').select('*').eq('user_id',currentUser.id).eq('status','in_progress').gte('updated_at',cutoff).order('updated_at',{ascending:false}).limit(5);return (data||[]).find(r=>!(r.destination&&r.start_date&&r.end_date&&Number(r.budget_inr)>0&&r.travellers_type&&r.interests&&r.pace))||null;}};
+  window.tripBackend={configured:true,client,getUser:()=>currentUser,getProfile:()=>profile,googleSignIn:signInGoogle,requestCode,verifyCode,askLogin,invoke,saveBooking,loadTrips,saveWishlist,removeWishlist,removeWishlistAt,openWishlistItem,ensureProfile,async updateProfile(name,mobile){if(!currentUser)throw new Error('Sign in to edit your profile.');const {error}=await client.from('profiles').update({name,mobile,email:currentUser.email||''}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return profile;},async signOut(){await client.auth.signOut();closeModal()},saveLocale:async(country,currency)=>{if(!currentUser)return false;const {error}=await client.from('profiles').update({preferred_country:country,preferred_currency:currency}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return true;},getRecentRequest:async()=>{if(!currentUser)return null;const cutoff=new Date(Date.now()-86400000).toISOString();const {data}=await client.from('trip_requests').select('*').eq('user_id',currentUser.id).eq('status','in_progress').gte('updated_at',cutoff).order('updated_at',{ascending:false}).limit(5);return (data||[]).find(r=>!(r.destination&&r.start_date&&r.end_date&&Number(r.budget_inr)>0&&r.travellers_type&&r.interests&&r.pace))||null;}};
   window.login=async function(){
     if(!currentUser){askLogin();return;}
     const name=profile?.name||anonName()||'';const mobile=profile?.mobile||'';
@@ -135,8 +168,8 @@
   const originalConfirm = window.confirmBooking;
   window.confirmBooking=async function(){const p=state?.pending;if(!p)return;try{if(!currentUser){askLogin('Sign in to save and confirm this booking.');return;}const seats=p.seats?.map((ss,i)=>'Segment '+(i+1)+': '+(ss.join(', ')||'Auto-assigned (demo)')).join(' | ');const details={service:p.r?.name,category:p.s?.category,from:p.s?.from,to:p.s?.to,date:p.s?.date,total:p.total,status:'Confirmed',name:profile?.name||'',email:currentUser.email||'',seats};const b=await saveBooking(details,p.total);modal('✓ Booking Saved',`<div class="summary"><h3>${esc2(b.booking_ref)}</h3><p>${esc2(details.service)} · ${esc2(details.to)}</p><p>${esc2(details.date)} · ₹${Number(p.total).toLocaleString('en-IN')}</p><p>Saved to your Supabase account.</p></div><button class="text-btn" onclick="showTrips()">MY TRIPS</button>`);state.pending=null;}catch(err){if(err.message!=='Sign-in required')toast(err.message||'Could not save booking.')}};
   const oldSaveItem=window.saveItem;
-  window.saveItem=async function(id){const r=state.results[id],item={...r,category:state.search.category,to:state.search.to,from:state.search.from,date:state.search.date};try{const added=await saveWishlist(item);toast(added?'Saved to your account wishlist.':'Already in your wishlist.')}catch(err){toast(err.message)}};
-  window.showWishlist=function(){modal('Your Wishlist',wishItems.length?wishItems.map((r,i)=>`<div class="summary"><h3>${esc2(r.name)}</h3><p>${esc2(r.category)} · ${esc2(r.to)} · ₹${Number(r.price||0).toLocaleString('en-IN')}</p><button class="text-btn" onclick="window.tripBackend.removeWishlist(${JSON.stringify(r)}).then(showWishlist)">REMOVE</button><button class="text-btn" onclick="closeModal();setCategory('${esc2(r.category)}');state.to=${JSON.stringify(r.to)};renderFields();search()">SEARCH AGAIN</button></div>`).join(''):'<p>Your wishlist is empty. Save a result to start planning.</p>')};
+  window.saveItem=async function(id){const r=state.results[id],item={...r,category:state.search.category,to:state.search.to,from:state.search.from,date:state.search.date,returnDate:state.search.returnDate,adults:state.search.adults,children:state.search.children,trip:state.search.trip,cabin:state.search.cabin,fare:state.search.fare};try{const added=await saveWishlist(item);toast(added?'Saved to your account wishlist.':'Already in your wishlist.')}catch(err){toast(err.message)}};
+  window.showWishlist=showWishlist;
   window.tripBackend.savePlan=async(trip,plan,tripRequestId,itineraryId)=>invoke('save_plan',{trip,plan,trip_request_id:tripRequestId,itinerary_id:itineraryId});
   window.saveLocalePreference=async function(){
     const countryName=document.getElementById('localeCountry')?.value||'India';
