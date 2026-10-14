@@ -10,6 +10,10 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 });
 const validTravellers = new Set(['solo', 'couple', 'family', 'friends']);
 const validPaces = new Set(['relaxed', 'normal', 'packed']);
+const isUsableDestination = (value: unknown) => {
+  const text = String(value || '').trim();
+  return Boolean(text && /[a-z]/i.test(text) && !/^(?:to|from|and|or|in|at|on|for|around|dates?|travel dates|trip|holiday|vacation|itinerary)$/i.test(text));
+};
 class AiError extends Error { constructor(public code: string, message: string) { super(message); } }
 const serviceUrl = Deno.env.get('SUPABASE_URL')!;
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -106,8 +110,16 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
     || destinationText.match(/\b(?:in|to|at)\s+([a-z][a-z\s'-]{0,35}?)(?=\s*(?:,|\bon\b|\bfrom\b|\bbudget\b|₹|\brs\b|\binr\b|\bsolo\b|\bcouple\b|\bfamily\b|\bfriends?\b|\bi\s+(?:like|love|enjoy)\b|\binterests?\b|\bpace\b|$))/i);
   if (destination) next.destination = destination[1].trim().replace(/\s+/g,' ');
   else if (!current.destination && (expected === 'destination' || expected === 'destination_dates') && !amount && !/^(plan\s+a\s+trip|start\s+over|continue\s+my\s+plan)$/i.test(message.trim())) {
-    const candidate = destinationText.replace(/^\s*(?:please\s+)?(?:planning|plan|make|create|build)\b/i, ' ').replace(/^\s*(?:a|an|my)\s+/i, ' ').split(/[,.!?\n]/)[0].trim();
-    if (candidate && candidate.length <= 80 && !/^(?:trip|holiday|vacation|itinerary)$/i.test(candidate)) next.destination = candidate;
+    // A date range can leave only the connector "to" after date removal.
+    // Never treat that residue as a place; still accept a place typed with dates.
+    const candidate = destinationText
+      .replace(/^\s*(?:please\s+)?(?:planning|plan|make|create|build)\b/i, ' ')
+      .replace(/^\s*(?:a|an|my)\s+/i, ' ')
+      .split(/[,.!?\n]/)[0]
+      .replace(/^\s*(?:(?:to|in|at|around)\s+)+/i, '')
+      .replace(/\s+(?:to|and|from)\s*$/i, '')
+      .trim();
+    if (candidate.length <= 80 && isUsableDestination(candidate) && !/\d/.test(candidate)) next.destination = candidate;
   }
   const interest = message.match(/\b(?:i\s+(?:like|love|enjoy)|interested\s+in|interests?\s*:?|into)\s+(.+?)(?=\s*,?\s*(?:relaxed|normal|packed)(?:\s+pace)?\b|$)/i);
   const knownInterests = [...new Set(lower.match(/\b(?:nature|food|temples?|beaches?|history|culture|shopping|adventure|art|architecture|wildlife|nightlife|wellness|photography|heritage|hiking|trekking|coffee|local\s+food)\b/g) || [])];
@@ -131,7 +143,7 @@ function cleanTrip(raw: Record<string, unknown> = {}) {
     endDate = calculated.toISOString().slice(0, 10);
   }
   return {
-    destination: String(raw.destination || '').trim().slice(0, 100),
+    destination: isUsableDestination(raw.destination) ? String(raw.destination).trim().slice(0, 100) : '',
     start_date: startDate,
     end_date: endDate,
     duration_days: durationDays,
