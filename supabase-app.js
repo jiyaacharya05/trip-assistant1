@@ -30,11 +30,24 @@
     return profile;
   }
   function authFrame(title, content){
-    modal(title, `<div class="myra-auth-grid"><aside class="myra-auth-visual" aria-label="Sunset over the ocean"><div class="myra-auth-brand">Trip Assistant</div><div class="myra-auth-caption"><span>TRAVEL, YOUR WAY</span><h2>Find your<br>kind of getaway.</h2><p>Thoughtful trip ideas, saved in one place.</p></div></aside><section class="myra-auth-content">${content}</section></div>`);
+    modal(title, `<div class="myra-auth-grid"><aside class="myra-auth-visual" aria-label="Sunset over the ocean"><img class="myra-auth-photo" src="assets/login-ocean-sunset.jpg" alt="Sunset over the ocean"><div class="myra-auth-brand">Trip Assistant</div><div class="myra-auth-caption"><span>TRAVEL, YOUR WAY</span><h2>Find your<br>kind of getaway.</h2><p>Thoughtful trip ideas, saved in one place.</p></div></aside><section class="myra-auth-content">${content}</section></div>`);
     document.querySelector('#modalRoot .modal')?.classList.add('myra-auth-modal');
   }
   function askLogin(message='Sign in to save trips and bookings.'){
-    authFrame('Login or Create Account', `<div class="myra-auth-kicker">WELCOME TO TRIP ASSISTANT</div><h2>Let’s get you going.</h2><p class="myra-auth-intro">Sign in or create an account to keep your trips together.</p>${message?`<p class="myra-auth-message">${esc2(message)}</p>`:''}<button class="myra-google-button" type="button" onclick="window.tripBackend.googleSignIn()"><span class="myra-google-g" aria-hidden="true">G</span><span>Continue with Google</span></button><div class="myra-auth-divider"><span>OR CONTINUE WITH EMAIL</span></div><form id="otpRequestForm" class="myra-auth-form"><label for="authEmail">Email address</label><input id="authEmail" required type="email" autocomplete="email" placeholder="you@example.com"><button class="myra-auth-submit">Send me a 6-digit code</button></form><p class="myra-auth-footnote">New to Trip Assistant? Your account is created when you verify your email. No password or SMS needed.</p><p class="myra-auth-terms">By continuing, you agree to use Trip Assistant. Myra helps with your travel planning.</p>`);
+    authFrame('Login or Create Account', `<div class="myra-auth-kicker">WELCOME TO TRIP ASSISTANT</div><h2>Let’s get you going.</h2><p class="myra-auth-intro">Sign in or create an account to keep your trips together.</p>${message?`<p class="myra-auth-message">${esc2(message)}</p>`:''}<button class="myra-google-button" type="button" onclick="window.tripBackend.googleSignIn()"><span class="myra-google-g" aria-hidden="true">G</span><span>Continue with Google</span></button><div class="myra-auth-divider"><span>OR CONTINUE WITH EMAIL</span></div><form id="otpRequestForm" class="myra-auth-form"><label for="authEmail">Email address</label><input id="authEmail" required type="email" autocomplete="email" placeholder="you@example.com"><button class="myra-auth-submit">Send me a 6-digit code</button></form><div style="margin-top:20px;padding:14px 15px;border:1px dashed #b9cde2;border-radius:10px;background:#f7fbff"><strong style="display:block;font-size:12px;letter-spacing:1px;color:#1686db;margin-bottom:6px">DEMO ACCOUNT</strong><p style="margin:0 0 10px;font-size:13px;line-height:1.55;color:#4a5a6d">Email <code>demo@tripassistant.app</code><br>Password <code>TripDemo@2026</code></p><button id="demoSignInBtn" class="myra-auth-submit" type="button" style="width:100%;margin-top:0;background:#fff;border:1px solid #1686db;color:#1686db">Sign in with demo account</button><p id="demoSignInStatus" role="status" aria-live="polite" style="display:none;margin:10px 0 0;font-size:12px;line-height:1.5;color:#a3302f"></p></div><p class="myra-auth-footnote">New to Trip Assistant? Your account is created when you verify your email. No password or SMS needed.</p><p class="myra-auth-terms">By continuing, you agree to use Trip Assistant. Myra helps with your travel planning.</p>`);
+    document.getElementById('demoSignInBtn')?.addEventListener('click',async e=>{
+      const btn=e.currentTarget,status=document.getElementById('demoSignInStatus');
+      btn.disabled=true;btn.textContent='Signing in…';status.style.display='none';
+      try{
+        const {error}=await client.auth.signInWithPassword({email:'demo@tripassistant.app',password:'TripDemo@2026'});
+        if(error)throw error;
+      }catch(err){
+        status.textContent=/invalid login credentials/i.test(err?.message||'')
+          ? 'Demo account is not set up yet. In Supabase, add demo@tripassistant.app with password TripDemo@2026 and enable Auto Confirm User.'
+          : (err?.message||'Demo sign-in failed. Please try again.');
+        status.style.display='block';btn.disabled=false;btn.textContent='Sign in with demo account';
+      }
+    });
     document.getElementById('otpRequestForm')?.addEventListener('submit',async e=>{
       e.preventDefault(); const email=document.getElementById('authEmail').value.trim();
       const button=e.currentTarget.querySelector('button');button.disabled=true;button.textContent='Sending code…';
