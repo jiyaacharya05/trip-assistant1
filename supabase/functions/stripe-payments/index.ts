@@ -12,7 +12,7 @@ const json = (data: unknown, status = 200, origin = "") =>
   new Response(JSON.stringify(data), { status, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } });
 const allowedOrigins = () => {
   const configured = (Deno.env.get("APP_ALLOWED_ORIGINS") || "").split(",").map(v => v.trim()).filter(Boolean);
-  return new Set(["https://tripassistant.ai.studio","https://aistudio.google.com","https://trip-assistant-dusky.vercel.app","http://localhost:8080","http://127.0.0.1:8080","http://localhost:3000","http://127.0.0.1:3000",...configured]);
+  return new Set(["https://tripassistant.ai.studio","https://aistudio.google.com","https://ais-dev-5povqxqk4ioynprxqefw3s-976271446764.asia-southeast1.run.app","https://trip-assistant-dusky.vercel.app","http://localhost:8080","http://127.0.0.1:8080","http://localhost:3000","http://127.0.0.1:3000",...configured]);
 };
 function isAllowedOrigin(origin: string, allowed: Set<string>) {
   if (allowed.has(origin)) return true;
