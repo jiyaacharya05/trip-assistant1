@@ -6,3 +6,6 @@ verify_jwt = false
 [functions.stripe-payments]
 # This handler verifies checkout JWTs itself and Stripe signatures for webhooks.
 verify_jwt = false
+
+[functions.create-checkout-session]
+verify_jwt = true
