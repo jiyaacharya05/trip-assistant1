@@ -110,8 +110,9 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
     || destinationText.match(/\b(?:in|to|at)\s+([a-z][a-z\s'-]{0,35}?)(?=\s*(?:,|\bon\b|\bfrom\b|\bbudget\b|₹|\brs\b|\binr\b|\bsolo\b|\bcouple\b|\bfamily\b|\bfriends?\b|\bi\s+(?:like|love|enjoy)\b|\binterests?\b|\bpace\b|$))/i);
   if (destination) next.destination = destination[1].trim().replace(/\s+/g,' ');
   else if (!current.destination && (expected === 'destination' || expected === 'destination_dates') && !amount && !/^(plan\s+a\s+trip|start\s+over|continue\s+my\s+plan)$/i.test(message.trim())) {
-    // A date range can leave only the connector "to" after date removal.
-    // Never treat that residue as a place; still accept a place typed with dates.
+    // A date range such as "15/10/2026 to 19/10/2026" leaves only the
+    // connector "to" after dates are removed. Never promote that residue to
+    // a destination. Still allow a place typed alongside dates ("Goa, ...").
     const candidate = destinationText
       .replace(/^\s*(?:please\s+)?(?:planning|plan|make|create|build)\b/i, ' ')
       .replace(/^\s*(?:a|an|my)\s+/i, ' ')
@@ -119,7 +120,8 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
       .replace(/^\s*(?:(?:to|in|at|around)\s+)+/i, '')
       .replace(/\s+(?:to|and|from)\s*$/i, '')
       .trim();
-    if (candidate.length <= 80 && isUsableDestination(candidate) && !/\d/.test(candidate)) next.destination = candidate;
+    const nonDestination = /^(?:to|from|and|or|in|at|on|for|around|dates?|travel|travel dates|trip|holiday|vacation|itinerary)$/i;
+    if (candidate && candidate.length <= 80 && /[a-z]/i.test(candidate) && !/\d/.test(candidate) && !nonDestination.test(candidate)) next.destination = candidate;
   }
   const interest = message.match(/\b(?:i\s+(?:like|love|enjoy)|interested\s+in|interests?\s*:?|into)\s+(.+?)(?=\s*,?\s*(?:relaxed|normal|packed)(?:\s+pace)?\b|$)/i);
   const knownInterests = [...new Set(lower.match(/\b(?:nature|food|temples?|beaches?|history|culture|shopping|adventure|art|architecture|wildlife|nightlife|wellness|photography|heritage|hiking|trekking|coffee|local\s+food)\b/g) || [])];
@@ -614,19 +616,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'create_booking') {
-      if (!userId) return json({ ok: false, requires_login: true, error: 'Please sign in before booking.' }, 401);
-      const d = body.details && typeof body.details === 'object' ? body.details as Record<string, unknown> : {};
-      const total = Math.floor(Number(body.total_inr));
-      if (!Number.isFinite(total) || total < 0 || total > 100000000) return json({ ok: false, error: 'Invalid booking total.' }, 422);
-      let itineraryId = typeof body.itinerary_id === 'string' ? body.itinerary_id : null;
-      if (itineraryId) {
-        const { data: owned } = await admin.from('itineraries').select('id').eq('id', itineraryId).eq('user_id', userId).maybeSingle();
-        if (!owned) itineraryId = null;
-      }
-      const bookingRef = `TA-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
-      const { data, error } = await admin.from('bookings').insert({ user_id: userId, itinerary_id: itineraryId, booking_ref: bookingRef, details_json: d, total_inr: total }).select('id,booking_ref,created_at').single();
-      if (error) throw error;
-      return json({ ok: true, booking: data });
+      return json({ ok: false, error: 'Bookings must use Stripe Checkout and payment confirmation.' }, 409);
     }
     return json({ error: 'Unknown action' }, 400);
   } catch (error) {
