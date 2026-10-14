@@ -161,7 +161,44 @@
   window.showTrips=async function(){
     if(!currentUser){askLogin('Sign in to see trips and bookings saved to your account.');return;}
     window.__myTripsOpen=true;modal('My Trips','<p>Loading your saved trips…</p>');
-    try{const data=await loadTrips();const plans=data.itineraries.map(it=>{const req=data.requests.find(r=>r.id===it.trip_request_id)||{},plan=it.itinerary_json||{};const days=(plan.days||[]).map(d=>`<li><b>Day ${d.day}</b> · ${esc2(d.stay)}<br>${(d.activities||[]).map(esc2).join(' · ')}<br><small>${(d.reasons||[]).map(esc2).join(' · ')}</small></li>`).join('');const why=it.review_status==='Approved'?`<div class="notice"><b>Why this plan</b><br>${esc2(it.ai_explanation||'')}</div>`:it.review_status==='Rejected'?'':`<div class="notice"><b>Why this plan</b><br>Being reviewed by our team</div>`;return `<div class="summary"><h3>${esc2(req.destination||'Saved trip')}</h3><p>${esc2(req.start_date||'')} – ${esc2(req.end_date||'')} · Budget ₹${Number(req.budget_inr||0).toLocaleString('en-IN')}</p><p>${esc2(it.itinerary_summary)}</p><ul>${days}</ul><b>Total: ₹${Number(plan.total_cost_inr||0).toLocaleString('en-IN')}</b>${why}</div>`}).join('');const bookings=data.bookings.map(b=>{const d=b.details_json||{};return `<div class="summary"><h3>${esc2(d.service||d.hotel||d.name||'Travel booking')}</h3><p>${esc2(d.from||'')} ${d.to?'→ '+esc2(d.to):''} · ${esc2(d.date||'')}</p><p>${esc2(b.booking_ref)} · ₹${Number(b.total_inr).toLocaleString('en-IN')}</p><b>${esc2(d.status||'Confirmed')}</b></div>`}).join('');const cutoff=Date.now()-86400000;const partial=data.requests.find(r=>r.status==='in_progress'&&Date.parse(r.updated_at||r.created_at)>=cutoff);modal('My Trips',`${partial?`<div class="notice">Continue your ${esc2(partial.destination)} plan? <button class="text-btn" onclick="document.getElementById('myra-launcher').click()">CONTINUE WITH MYRA</button></div>`:''}${plans}${bookings}${plans||bookings?'':'<p>No saved trips yet. Start planning with Myra or book a demo option.</p>'}`)}catch(err){modal('My Trips',`<p>Could not load your trips. ${esc2(err.message)}</p>`)}
+    try{
+      const data=await loadTrips();
+      const showDate=value=>{if(!value)return '';const parsed=new Date(value);return Number.isNaN(parsed.getTime())?String(value):parsed.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'UTC'});};
+      const renderDays=plan=>(plan.days||[]).map(day=>'<li><b>Day '+esc2(day.day)+'</b> · '+esc2(day.stay||'Explore the destination')+'<br>'+((day.activities||[]).map(esc2).join(' · '))+(day.reasons?.length?'<br><small>'+day.reasons.map(esc2).join(' · ')+'</small>':'')+'</li>').join('');
+      const plans=data.itineraries.map(it=>{
+        const req=data.requests.find(r=>r.id===it.trip_request_id)||{},plan=it.itinerary_json||{};
+        const why=it.review_status==='Approved'?'<div class="notice"><b>Why this plan</b><br>'+esc2(it.ai_explanation||'')+'</div>':it.review_status==='Rejected'?'':'<div class="notice"><b>Why this plan</b><br>Being reviewed by our team</div>';
+        return '<article class="summary"><h3>'+esc2(req.destination||'Saved trip')+'</h3><p>'+esc2(showDate(req.start_date))+' – '+esc2(showDate(req.end_date))+' · Budget ₹'+Number(req.budget_inr||0).toLocaleString('en-IN')+'</p><p>'+esc2(it.itinerary_summary||'')+'</p><ul>'+renderDays(plan)+'</ul><b>Estimated total: ₹'+Number(plan.total_cost_inr||0).toLocaleString('en-IN')+'</b>'+why+'</article>';
+      }).join('');
+      const bookings=data.bookings.map(b=>{
+        const d=b.details_json||{},related=data.itineraries.find(it=>it.id===b.itinerary_id),plan=related?.itinerary_json||{};
+        const req=related?data.requests.find(r=>r.id===related.trip_request_id)||{}:{};
+        const title=d.service||d.hotel||d.name||d.destination||d.to||'Travel booking';
+        const route=[d.from,d.to].filter(Boolean).map(esc2).join(' → ');
+        const destination=d.destination||(!route?d.to:'');
+        const begin=d.check_in||d.date||d.start_date,finish=d.check_out||d.return_date||d.returnDate||d.end_date;
+        const dateLine=[showDate(begin),showDate(finish)].filter(Boolean).join(' – ');
+        const party=d.travellers||d.traveller_count||d.guests||d.passengers;
+        const details=[
+          ['Booking reference',b.booking_ref||'—'],
+          ['Destination / route',destination?esc2(destination):(route||'—')],
+          ['Travel dates',dateLine||'—'],
+          ['Category',d.category||'—'],
+          ['Travellers',party?(Array.isArray(party)?party.length+' traveller(s)':esc2(party)+' traveller(s)'):'—'],
+          ['Lead traveller',d.name||'—']
+        ];
+        const detailRows=details.map(item=>'<div style="display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #e8edf3"><span style="color:#68778a">'+item[0]+'</span><b style="text-align:right">'+(item[1]==='—'?'—':esc2(item[1]))+'</b></div>').join('');
+        const status=d.status||'Confirmed';
+        const tripPlan=related?'<details style="margin-top:14px"><summary style="cursor:pointer;color:#0878d1;font-weight:700">View linked itinerary</summary><p>'+esc2(related.itinerary_summary||req.destination||'')+'</p><ul>'+renderDays(plan)+'</ul></details>':'';
+        return '<article class="summary" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap"><div><span style="display:inline-block;color:#137a52;background:#e8f7ef;border-radius:20px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:.04em">BOOKED</span><h3 style="margin:10px 0 4px">'+esc2(title)+'</h3><p style="margin:0;color:#667085">'+(route||esc2(destination||''))+(dateLine?' · '+esc2(dateLine):'')+'</p></div><div style="text-align:right"><b style="color:#137a52">'+esc2(status)+'</b><div style="font-size:18px;font-weight:800;margin-top:8px">₹'+Number(b.total_inr||0).toLocaleString('en-IN')+'</div><small>Total paid (demo)</small></div></div><div style="margin-top:14px">'+detailRows+'</div>'+tripPlan+'</article>';
+      }).join('');
+      const cutoff=Date.now()-86400000,partial=data.requests.find(r=>r.status==='in_progress'&&Date.parse(r.updated_at||r.created_at)>=cutoff);
+      const content=(partial?'<div class="notice">Continue your '+esc2(partial.destination||'')+' plan? <button class="text-btn" onclick="document.getElementById(\'myra-launcher\').click()">CONTINUE WITH MYRA</button></div>':'')+
+        (bookings?'<h3 style="margin:18px 0 10px">Booked trips</h3>'+bookings:'')+
+        (plans?'<h3 style="margin:22px 0 10px">Saved itineraries</h3>'+plans:'')+
+        (bookings||plans?'':'<p>No booked trips or saved plans yet. Start planning with Myra or book a demo option.</p>');
+      modal('My Trips',content);
+    }catch(err){modal('My Trips','<p>Could not load your trips. '+esc2(err.message)+'</p>')}
   };
   window.cancelTrip=async function(i){const b=trips[i];if(!b)return;modal('Cancel Booking',`<p>Cancel ${esc2(b.service||'this booking')}?</p><div class="notice">This demo does not process refunds or contact a travel provider.</div><button class="blue" onclick="window.tripBackend.cancelBooking(${JSON.stringify(b.id)})">CONFIRM CANCELLATION</button>`)};
   window.tripBackend.cancelBooking=async id=>{const {data,error}=await client.from('bookings').select('details_json').eq('id',id).eq('user_id',currentUser.id).single();if(error)throw error;const {error:e}=await client.from('bookings').update({details_json:{...data.details_json,status:'Cancelled'}}).eq('id',id).eq('user_id',currentUser.id);if(e)throw e;await loadTrips();showTrips()};
