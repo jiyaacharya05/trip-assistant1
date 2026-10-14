@@ -87,23 +87,25 @@
     const d=details||{},norm=v=>String(v??'').trim().toLowerCase();
     return JSON.stringify([norm(d.service||d.hotel||d.name),norm(d.category),norm(d.from),norm(d.to),norm(d.destination),norm(d.date||d.check_in),norm(d.check_out||d.return_date||d.returnDate),norm(d.room),norm(d.name||d.guest),Math.round(Number(total)||0)]);
   };
-  async function saveBooking(details,total,itineraryId=null,idempotencyKey=null){
-    if(!currentUser){askLogin('Please sign in before confirming a booking.');throw new Error('Sign-in required');}
-    const amount=Math.max(0,Math.round(Number(total)||0)),signature=bookingSignature(details,amount);
-    if(bookingWrites.has(signature))return bookingWrites.get(signature);
-    const task=(async()=>{
-      const cutoff=new Date(Date.now()-10*60*1000).toISOString();
-      const {data:recent,error:lookupError}=await client.from('bookings').select('id,booking_ref,details_json,total_inr,created_at').eq('user_id',currentUser.id).gte('created_at',cutoff).order('created_at',{ascending:false}).limit(40);
-      if(lookupError)throw lookupError;
-      const existing=(recent||[]).find(row=>bookingSignature(row.details_json,row.total_inr)===signature);
-      if(existing)return {id:existing.id,booking_ref:existing.booking_ref,created_at:existing.created_at,already_saved:true};
-      const key=idempotencyKey||details?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||'ta-'+Date.now());
-      const safeDetails={...(details||{}),idempotency_key:key};
-      const result=await invoke('create_booking',{details:safeDetails,total_inr:amount,itinerary_id:itineraryId});
-      await loadTrips();return result.booking;
-    })();
-    bookingWrites.set(signature,task);
-    try{return await task}finally{bookingWrites.delete(signature)}
+  async function startStripeCheckout(details,total,itineraryId=null,idempotencyKey=null){
+    if(!currentUser){askLogin('Please sign in before paying for a booking.');throw new Error('Sign-in required');}
+    const amount=Math.round(Number(total)||0);
+    if(amount<1)throw new Error('The payment amount must be greater than ₹0.');
+    const key=idempotencyKey||details?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||'ta-'+Date.now());
+    const safeDetails={...(details||{}),idempotency_key:key,status:'Payment pending',payment_status:'pending',payment_provider:'Stripe'};
+    const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'create_checkout',details:safeDetails,total_inr:amount,itinerary_id:itineraryId,idempotency_key:key}});
+    if(error)throw error;
+    if(data?.error)throw new Error(data.error);
+    if(!data?.url)throw new Error('Stripe did not return a checkout link.');
+    window.top.location.assign(data.url);
+    return data;
+  }
+  async function verifyStripeCheckout(sessionId){
+    if(!currentUser||!sessionId)return null;
+    const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'verify_checkout',session_id:sessionId}});
+    if(error)throw error;
+    if(data?.error)throw new Error(data.error);
+    return data;
   }
   async function loadTrips(){
     if(!currentUser)return {bookings:[],itineraries:[],requests:[]};
@@ -168,7 +170,7 @@
       if(window.__myTripsOpen)showTrips();
     }).subscribe();
   }
-  window.tripBackend={configured:true,client,getUser:()=>currentUser,getProfile:()=>profile,googleSignIn:signInGoogle,requestCode,verifyCode,askLogin,invoke,saveBooking,loadTrips,saveWishlist,removeWishlist,removeWishlistAt,openWishlistItem,ensureProfile,async updateProfile(name,mobile){if(!currentUser)throw new Error('Sign in to edit your profile.');const {error}=await client.from('profiles').update({name,mobile,email:currentUser.email||''}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return profile;},async signOut(){await client.auth.signOut();closeModal()},saveLocale:async(country,currency)=>{if(!currentUser)return false;const {error}=await client.from('profiles').update({preferred_country:country,preferred_currency:currency}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return true;},getRecentRequest:async()=>{if(!currentUser)return null;const cutoff=new Date(Date.now()-86400000).toISOString();const {data}=await client.from('trip_requests').select('*').eq('user_id',currentUser.id).eq('status','in_progress').gte('updated_at',cutoff).order('updated_at',{ascending:false}).limit(5);return (data||[]).find(r=>!(r.destination&&r.start_date&&r.end_date&&Number(r.budget_inr)>0&&r.travellers_type&&r.interests&&r.pace))||null;}};
+  window.tripBackend={configured:true,client,getUser:()=>currentUser,getProfile:()=>profile,googleSignIn:signInGoogle,requestCode,verifyCode,askLogin,invoke,startStripeCheckout,verifyStripeCheckout,loadTrips,saveWishlist,removeWishlist,removeWishlistAt,openWishlistItem,ensureProfile,async updateProfile(name,mobile){if(!currentUser)throw new Error('Sign in to edit your profile.');const {error}=await client.from('profiles').update({name,mobile,email:currentUser.email||''}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return profile;},async signOut(){await client.auth.signOut();closeModal()},saveLocale:async(country,currency)=>{if(!currentUser)return false;const {error}=await client.from('profiles').update({preferred_country:country,preferred_currency:currency}).eq('id',currentUser.id);if(error)throw error;await refreshProfile();return true;},getRecentRequest:async()=>{if(!currentUser)return null;const cutoff=new Date(Date.now()-86400000).toISOString();const {data}=await client.from('trip_requests').select('*').eq('user_id',currentUser.id).eq('status','in_progress').gte('updated_at',cutoff).order('updated_at',{ascending:false}).limit(5);return (data||[]).find(r=>!(r.destination&&r.start_date&&r.end_date&&Number(r.budget_inr)>0&&r.travellers_type&&r.interests&&r.pace))||null;}};
   window.login=async function(){
     if(!currentUser){askLogin();return;}
     const name=profile?.name||anonName()||'';const mobile=profile?.mobile||'';
@@ -204,13 +206,13 @@
           ['Category',d.category||'—'],
           ['Travellers',party?(Array.isArray(party)?party.length+' traveller(s)':esc2(party)+' traveller(s)'):'—'],
           ['Lead traveller',d.name||d.guest||'—'],
-          ['Payment method',d.payment_method||'Demo payment'],
-          ['Payment status',d.payment_status||'Simulated · not charged']
+          ['Payment method',d.payment_provider==='Stripe'?'Stripe Checkout':d.payment_method||'—'],
+          ['Payment status',d.payment_status==='paid'?'Paid':d.payment_status==='pending'?'Pending':d.payment_status||'—']
         ];
         const detailRows=details.map(item=>'<div style="display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #e8edf3"><span style="color:#68778a">'+item[0]+'</span><b style="text-align:right">'+(item[1]==='—'?'—':esc2(item[1]))+'</b></div>').join('');
         const status=d.status||'Confirmed';
         const tripPlan=related?'<details style="margin-top:14px"><summary style="cursor:pointer;color:#0878d1;font-weight:700">View linked itinerary</summary><p>'+esc2(related.itinerary_summary||req.destination||'')+'</p><ul>'+renderDays(plan)+'</ul></details>':'';
-        return '<article class="summary" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap"><div><span style="display:inline-block;color:#137a52;background:#e8f7ef;border-radius:20px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:.04em">BOOKING SAVED · DEMO</span><h3 style="margin:10px 0 4px">'+esc2(title)+'</h3><p style="margin:0;color:#667085">'+(route||esc2(destination||''))+(dateLine?' · '+esc2(dateLine):'')+'</p></div><div style="text-align:right"><b style="color:#137a52">'+esc2(status)+'</b><div style="font-size:18px;font-weight:800;margin-top:8px">₹'+Number(b.total_inr||0).toLocaleString('en-IN')+'</div><small>Booking total · demo</small></div></div><div style="margin-top:14px">'+detailRows+'</div>'+tripPlan+'</article>';
+        return '<article class="summary" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap"><div><span style="display:inline-block;color:#137a52;background:#e8f7ef;border-radius:20px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:.04em">'+(d.payment_status==='paid'?'PAYMENT CONFIRMED · STRIPE':d.payment_status==='pending'?'PAYMENT PENDING · STRIPE':'BOOKING')+'</span><h3 style="margin:10px 0 4px">'+esc2(title)+'</h3><p style="margin:0;color:#667085">'+(route||esc2(destination||''))+(dateLine?' · '+esc2(dateLine):'')+'</p></div><div style="text-align:right"><b style="color:#137a52">'+esc2(status)+'</b><div style="font-size:18px;font-weight:800;margin-top:8px">₹'+Number(b.total_inr||0).toLocaleString('en-IN')+'</div><small>Booking total</small></div></div><div style="margin-top:14px">'+detailRows+'</div>'+tripPlan+'</article>';
       }).join('');
       const cutoff=Date.now()-86400000,partial=data.requests.find(r=>r.status==='in_progress'&&Date.parse(r.updated_at||r.created_at)>=cutoff);
       const content=(partial?'<div class="notice">Continue your '+esc2(partial.destination||'')+' plan? <button class="text-btn" onclick="document.getElementById(\'myra-launcher\').click()">CONTINUE WITH MYRA</button></div>':'')+
@@ -222,8 +224,7 @@
   };
   window.cancelTrip=async function(i){const b=trips[i];if(!b)return;modal('Cancel Booking',`<p>Cancel ${esc2(b.service||'this booking')}?</p><div class="notice">This demo does not process refunds or contact a travel provider.</div><button class="blue" onclick="window.tripBackend.cancelBooking(${JSON.stringify(b.id)})">CONFIRM CANCELLATION</button>`)};
   window.tripBackend.cancelBooking=async id=>{const {data,error}=await client.from('bookings').select('details_json').eq('id',id).eq('user_id',currentUser.id).single();if(error)throw error;const {error:e}=await client.from('bookings').update({details_json:{...data.details_json,status:'Cancelled'}}).eq('id',id).eq('user_id',currentUser.id);if(e)throw e;await loadTrips();showTrips()};
-  const originalConfirm = window.confirmBooking;
-  window.confirmBooking=async function(){const p=state?.pending;if(!p)return;try{if(!currentUser){askLogin('Sign in to save and confirm this booking.');return;}const seats=p.seats?.map((ss,i)=>'Segment '+(i+1)+': '+(ss.join(', ')||'Auto-assigned (demo)')).join(' | ');const category=p.s?.category||'',isStay=['Hotels','Villas & Homestays'].includes(category),details={service:p.r?.name,category,destination:p.s?.to,from:isStay?undefined:p.s?.from,to:isStay?undefined:p.s?.to,date:p.s?.date,check_in:isStay?p.s?.date:undefined,check_out:isStay?p.s?.returnDate:undefined,nights:isStay?Math.max(1,Math.round((new Date(p.s?.returnDate)-new Date(p.s?.date))/86400000)):undefined,travellers:p.travellers||((p.s?.adults||1)+(p.s?.children||0)),total:p.total,status:'Confirmed (sample)',name:profile?.name||p.name||'',email:currentUser.email||'',seats,payment_method:p.paymentMethod||'UPI (demo)',payment_status:'Simulated · not charged',idempotency_key:p.bookingAttemptId};const b=await saveBooking(details,p.total,null,p.bookingAttemptId);modal('✓ Booking Saved',`<div class="summary"><h3>${esc2(b.booking_ref)}</h3><p>${esc2(details.service)} · ${esc2(details.to)}</p><p>${esc2(details.date)} · ₹${Number(p.total).toLocaleString('en-IN')}</p><p>Saved to your Supabase account.</p></div><button class="text-btn" onclick="showTrips()">MY TRIPS</button>`);state.pending=null;}catch(err){if(err.message!=='Sign-in required')toast(err.message||'Could not save booking.')}};
+  window.confirmBooking=async function(){const p=state?.pending;if(!p)return;try{if(!currentUser){askLogin('Sign in before paying for this booking.');return;}const category=p.s?.category||'',isStay=['Hotels','Villas & Homestays'].includes(category),details={service:p.r?.name,category,destination:p.s?.to,from:isStay?undefined:p.s?.from,to:p.s?.to,date:p.s?.date,check_in:isStay?p.s?.date:undefined,check_out:isStay?p.s?.returnDate:undefined,nights:isStay?Math.max(1,Math.round((new Date(p.s?.returnDate)-new Date(p.s?.date))/86400000)):undefined,travellers:p.travellers||((p.s?.adults||1)+(p.s?.children||0)),name:profile?.name||p.name||'',email:currentUser.email||'',seats:p.seats?.map((ss,i)=>'Segment '+(i+1)+': '+(ss.join(', ')||'Auto-assigned')).join(' | '),status:'Payment pending'};await startStripeCheckout(details,p.total,null,p.bookingAttemptId)}catch(err){if(err.message!=='Sign-in required')toast(err.message||'Could not open Stripe Checkout.')}};
   const oldSaveItem=window.saveItem;
   window.saveItem=async function(id){const r=state.results[id],item={...r,category:state.search.category,to:state.search.to,from:state.search.from,date:state.search.date,returnDate:state.search.returnDate,adults:state.search.adults,children:state.search.children,trip:state.search.trip,cabin:state.search.cabin,fare:state.search.fare};try{const added=await saveWishlist(item);toast(added?'Saved to your account wishlist.':'Already in your wishlist.')}catch(err){toast(err.message)}};
   window.showWishlist=showWishlist;
@@ -237,13 +238,23 @@
     try{if(currentUser)await window.tripBackend.saveLocale(countryName,code);closeModal();renderResults();toast(`Prices now display in ${code}.`)}
     catch(err){toast(err.message||'Could not save your currency preference.')}};
   window.tripBackend.listenReviews=listenReviews;
+  let stripeReturnHandled='';
+  async function handleStripeReturn(){
+    const params=new URLSearchParams(location.search),status=params.get('stripe_checkout'),sessionId=params.get('session_id');
+    if(status==='cancelled'){history.replaceState({},'',location.pathname+location.hash);toast('Checkout cancelled. No payment was taken.');return;}
+    if(status!=='success'||!sessionId||!currentUser||stripeReturnHandled===sessionId)return;
+    stripeReturnHandled=sessionId;
+    try{const result=await verifyStripeCheckout(sessionId);await loadTrips();if(result?.paid)toast('Payment confirmed by Stripe. Booking '+result.booking_ref+' is in My Trips.');else toast(result?.message||'Stripe is still confirming this payment.')}
+    catch(error){console.error('Stripe return verification failed:',error);toast(error.message||'We could not verify this payment yet. Check My Trips in a moment.')}
+    finally{history.replaceState({},'',location.pathname+location.hash)}
+  }
   client.auth.onAuthStateChange(async(_event,session)=>{
     currentUser=session?.user||null;
-    try{await refreshProfile();if(currentUser){listenReviews();await loadTrips();if(_event==='SIGNED_IN')await ensureProfile();if(pendingHotelBooking){const pending=pendingHotelBooking;pendingHotelBooking=null;try{const booking=await saveBooking(pending.details,pending.total_inr,pending.itinerary_id||null);pending.source?.postMessage({type:'hotel-booking-saved',booking_ref:booking.booking_ref},location.origin);toast('Hotel booking saved to My Trips.')}catch(err){console.error(err);toast('Could not save the hotel booking.')}}}else{reviewChannel?.unsubscribe();trips=[];wishlist=[];wishItems=[];}}
+    try{await refreshProfile();if(currentUser){listenReviews();await loadTrips();if(_event==='SIGNED_IN')await ensureProfile();if(pendingHotelBooking){const pending=pendingHotelBooking;pendingHotelBooking=null;try{await startStripeCheckout(pending.details,pending.total_inr,pending.itinerary_id||null,pending.idempotency_key);pending.source?.postMessage({type:'stripe-checkout-started'},location.origin)}catch(err){console.error(err);toast(err.message||'Could not start Stripe Checkout.')}}await handleStripeReturn()}else{reviewChannel?.unsubscribe();trips=[];wishlist=[];wishItems=[];}}
     catch(err){console.error(err);toast('Account data could not be loaded. Check your Supabase setup.')}
     if(typeof updateUser==='function')updateUser();
   });
-  client.auth.getSession().then(async({data})=>{currentUser=data.session?.user||null;if(currentUser){await refreshProfile();listenReviews();await loadTrips();if(!profile?.name||!profile?.mobile)await ensureProfile()}updateUser()}).catch(console.error);
+  client.auth.getSession().then(async({data})=>{currentUser=data.session?.user||null;if(currentUser){await refreshProfile();listenReviews();await loadTrips();if(!profile?.name||!profile?.mobile)await ensureProfile();await handleStripeReturn()}else if(new URLSearchParams(location.search).get('stripe_checkout')==='cancelled'){await handleStripeReturn()}updateUser()}).catch(console.error);
   document.getElementById('loginBtn')?.addEventListener('click',e=>{e.preventDefault();window.login()});
   function sendMyraBootstrap(target=document.getElementById('myra-panel')?.contentWindow){
     if(!target)return;
@@ -256,8 +267,9 @@
     if(d.type==='myra-ready')sendMyraBootstrap(e.source);
 
     if(d.type==='myra-booking'){
-      if(!currentUser){pendingHotelBooking={details:d.details,total_inr:d.total_inr,itinerary_id:d.itinerary_id,source:e.source};askLogin('Sign in before saving this hotel booking.');return;}
-      try{const booking=await saveBooking(d.details,d.total_inr,d.itinerary_id||null);e.source?.postMessage({type:'hotel-booking-saved',booking_ref:booking.booking_ref},location.origin);toast('Booking saved to your account.')}catch(err){if(err.message!=='Sign-in required')toast(err.message)}
+      if(!currentUser){pendingHotelBooking={details:d.details,total_inr:d.total_inr,itinerary_id:d.itinerary_id,idempotency_key:d.idempotency_key,source:e.source};askLogin('Sign in before paying for this hotel booking.');return;}
+      try{await startStripeCheckout(d.details,d.total_inr,d.itinerary_id||null,d.idempotency_key);e.source?.postMessage({type:'stripe-checkout-started'},location.origin)}
+      catch(err){if(err.message!=='Sign-in required')toast(err.message||'Could not start Stripe Checkout.')}
     }
   });
 })();
