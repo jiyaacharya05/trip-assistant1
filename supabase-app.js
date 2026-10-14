@@ -39,8 +39,10 @@
       const btn=e.currentTarget,status=document.getElementById('demoSignInStatus');
       btn.disabled=true;btn.textContent='Signing in…';status.style.display='none';
       try{
-        const {error}=await client.auth.signInWithPassword({email:'demo@tripassistant.app',password:'TripDemo@2026'});
+        const {data,error}=await client.auth.signInWithPassword({email:'demo@tripassistant.app',password:'TripDemo@2026'});
         if(error)throw error;
+        closeModal();
+        toast('Signed in successfully. Your account is ready.');
       }catch(err){
         status.textContent=/invalid login credentials/i.test(err?.message||'')
           ? 'Demo account is not set up yet. In Supabase, add demo@tripassistant.app with password TripDemo@2026 and enable Auto Confirm User.'
@@ -259,6 +261,7 @@
     finally{history.replaceState({},'',location.pathname+location.hash)}
   }
   client.auth.onAuthStateChange(async(_event,session)=>{
+    if(_event==='SIGNED_IN')closeModal();
     currentUser=session?.user||null;
     try{await refreshProfile();if(currentUser){listenReviews();await loadTrips();if(_event==='SIGNED_IN')await ensureProfile();if(pendingHotelBooking){const pending=pendingHotelBooking;pendingHotelBooking=null;try{await startStripeCheckout(pending.details,pending.total_inr,pending.itinerary_id||null,pending.idempotency_key);pending.source?.postMessage({type:'stripe-checkout-started'},location.origin)}catch(err){console.error(err);toast(err.message||'Could not start Stripe Checkout.')}}await handleStripeReturn()}else{reviewChannel?.unsubscribe();trips=[];wishlist=[];wishItems=[];}}
     catch(err){console.error(err);toast('Account data could not be loaded. Check your Supabase setup.')}
