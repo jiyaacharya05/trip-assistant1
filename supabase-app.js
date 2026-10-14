@@ -94,8 +94,9 @@
     const key=idempotencyKey||details?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||'ta-'+Date.now());
     const safeDetails={...(details||{}),idempotency_key:key,status:'Payment pending',payment_status:'pending',payment_provider:'Stripe'};
     const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'create_checkout',details:safeDetails,total_inr:amount,itinerary_id:itineraryId,idempotency_key:key}});
-    if(error)throw error;
+    if(error){let message=error.message;try{const detail=await error.context?.json();message=detail?.error||message}catch{}throw new Error(message)}
     if(data?.error)throw new Error(data.error);
+    if(data?.paid){await loadTrips();toast('This booking is already paid. It is available in My Trips.');return data}
     if(!data?.url)throw new Error('Stripe did not return a checkout link.');
     window.top.location.assign(data.url);
     return data;
@@ -103,7 +104,7 @@
   async function verifyStripeCheckout(sessionId){
     if(!currentUser||!sessionId)return null;
     const {data,error}=await client.functions.invoke('stripe-payments',{body:{action:'verify_checkout',session_id:sessionId}});
-    if(error)throw error;
+    if(error){let message=error.message;try{const detail=await error.context?.json();message=detail?.error||message}catch{}throw new Error(message)}
     if(data?.error)throw new Error(data.error);
     return data;
   }
