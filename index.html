@@ -160,7 +160,7 @@ const embeddedBanner="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/61WCSlA
 const homeBanner=document.querySelector('.home-banner');homeBanner.querySelector('img').src=embeddedBanner;document.querySelector('main.container').prepend(homeBanner);
 const detailObjectURLs=[];
 openHotelTab=function(id){const r=state.results[id],s=state.search;let recs=state.results.filter(x=>x.id!==id).slice(id+1,id+7);if(recs.length<6)recs.push(...state.results.filter(x=>x.id!==id&&!recs.some(y=>y.id===x.id)).slice(0,6-recs.length));const data={hotel:r,search:{...s,results:[]},recommendations:recs},html=hotelDocument(data),url=URL.createObjectURL(new Blob([html],{type:'text/html'}));detailObjectURLs.push(url);let opened=null;try{opened=window.open(url,'_blank')}catch(e){}if(opened){toast('Hotel details opened in a new tab.');return}showDetailFallback(html,url)};
-function showDetailFallback(html,url){document.querySelector('#hotelDetailFallback')?.remove();const wrap=document.createElement('div');wrap.id='hotelDetailFallback';wrap.className='hotel-fallback';wrap.innerHTML='<div class="detail-toolbar"><span>Your browser or preview blocked a new tab. Hotel details are shown here instead.</span><div style="display:flex;gap:10px"><a id="detailOpenLink" target="_blank" rel="noopener">OPEN IN NEW TAB ↗</a><button onclick="closeHotelFallback()">← BACK TO RESULTS</button></div></div>';wrap.querySelector('a').href=url;const iframe=document.createElement('iframe');iframe.title='Hotel details, rooms and recommended hotels';iframe.srcdoc=html;wrap.appendChild(iframe);document.body.appendChild(wrap);document.body.style.overflow='hidden'}
+function showDetailFallback(html,url){document.querySelector('#hotelDetailFallback')?.remove();const wrap=document.createElement('div');wrap.id='hotelDetailFallback';wrap.className='hotel-fallback';wrap.innerHTML='<div class="detail-toolbar"><span>Hotel details and room checkout are open in this page.</span><button onclick="closeHotelFallback()">← BACK TO RESULTS</button></div>';const iframe=document.createElement('iframe');iframe.title='Hotel details, rooms and recommended hotels';iframe.srcdoc=html;wrap.appendChild(iframe);document.body.appendChild(wrap);document.body.style.overflow='hidden'}
 function closeHotelFallback(){document.querySelector('#hotelDetailFallback')?.remove();document.body.style.overflow=''}
 const localDemoLogin=login;
 login=function(){if(user.name)return localDemoLogin();modal('Sign In',`<div class="login-split"><div class="login-art" id="loginArtwork"><div><h2>Your next adventure<br>starts with you.</h2><p>Discover places. Collect memories.</p></div></div><div class="login-panel"><h2>Welcome aboard</h2><p style="color:#777;font-size:13px">Sign in or create an account.</p><button class="oauth-button" onclick="providerNeedsSetup('Google')"><span class="g">G</span> Continue with Google</button><button class="oauth-button apple" onclick="providerNeedsSetup('Apple')"><span class="apple-icon">●</span> Continue with Apple</button><div class="setup-note" id="oauthSetupNote">Google and Apple sign-in are not connected yet. Registered provider credentials and a deployed site are required.</div><div class="login-divider">OR EXPLORE THIS DEMO</div><button class="login-demo-link" onclick="localDemoLogin()">Use a local demo profile</button><p class="login-legal">Provider login will be enabled after setup. No Google or Apple passwords are collected by this demo.</p></div></div>`);document.querySelector('.modal').classList.add('login-art-modal');$('loginArtwork').style.backgroundImage='url('+embeddedBanner+')'};
@@ -888,9 +888,16 @@ details=function(id){
     const html=hotelDocument(data).replace(/(["'])assets\//g,'$1'+assetBase);
     const url=URL.createObjectURL(new Blob([html],{type:'text/html'}));
     detailObjectURLs.push(url);
+    let embeddedPreview=false;
+    try{embeddedPreview=window.top!==window}catch(error){embeddedPreview=true}
     let opened=null;
-    try{opened=window.open(url,'_blank')}catch(error){}
-    if(opened){toast('Hotel details opened in a new tab.');return}
+    if(!embeddedPreview){try{opened=window.open(url,'_blank')}catch(error){}}
+    let openerConnected=false;
+    if(opened){try{openerConnected=!!opened.opener&&!opened.opener.closed}catch(error){}}
+    if(opened&&openerConnected){toast('Hotel details opened in a new tab.');return}
+    if(opened){try{opened.close()}catch(error){}}
+    // AI Studio can isolate blob tabs from their opener. Keep the details in an
+    // iframe inside the app so room selection can always reach auth and checkout.
     showDetailFallback(html,url);
   };
 })();
