@@ -208,7 +208,12 @@
       const renderDays=plan=>(plan.days||[]).map(day=>'<li><b>Day '+esc2(day.day)+'</b> · '+esc2(day.stay||'Explore the destination')+'<br>'+((day.activities||[]).map(esc2).join(' · '))+(day.reasons?.length?'<br><small>'+day.reasons.map(esc2).join(' · ')+'</small>':'')+'</li>').join('');
       const plans=data.itineraries.map(it=>{
         const req=data.requests.find(r=>r.id===it.trip_request_id)||{},plan=it.itinerary_json||{};
-        const why=it.review_status==='Approved'?'<div class="notice"><b>Why this plan</b><br>'+esc2(it.ai_explanation||'')+'</div>':it.review_status==='Rejected'?'':'<div class="notice"><b>Why this plan</b><br>Being reviewed by our team</div>';
+        const reviewStatus=String(it.review_status||'Pending review').toLowerCase();
+        const why=reviewStatus==='approved'
+          ?'<div class="notice"><b>Review status: Approved · Why this plan</b><br>'+esc2(it.ai_explanation||'Our team approved this itinerary.')+'</div>'
+          :reviewStatus==='rejected'
+            ?'<div class="notice"><b>Review status: Rejected</b><br>The explanation was not approved by our review team. You can ask Myra to revise this itinerary.</div>'
+            :'<div class="notice"><b>Review status: Pending review</b><br>Being reviewed by our team.</div>';
         return '<article class="summary"><h3>'+esc2(req.destination||'Saved trip')+'</h3><p>'+esc2(showDate(req.start_date))+' – '+esc2(showDate(req.end_date))+' · Budget ₹'+Number(req.budget_inr||0).toLocaleString('en-IN')+'</p><p>'+esc2(it.itinerary_summary||'')+'</p><ul>'+renderDays(plan)+'</ul><b>Estimated total: ₹'+Number(plan.total_cost_inr||0).toLocaleString('en-IN')+'</b>'+why+'</article>';
       }).join('');
       const seenBookingSignatures=new Set();const uniqueBookings=data.bookings.filter(b=>{const key=bookingSignature(b.details_json||{},b.total_inr);if(seenBookingSignatures.has(key))return false;seenBookingSignatures.add(key);return true});const bookings=uniqueBookings.map(b=>{
