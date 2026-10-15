@@ -267,7 +267,11 @@
     // Apply the choice immediately so a profile/network error cannot leave the
     // old currency visible. Authenticated users also save it to their profile.
     closeModal();
-    renderResults();
+    try {
+      if (state?.search && state.results && document.getElementById('resultList')) renderResults();
+    } catch (err) {
+      console.warn('Could not refresh search results after currency change:', err);
+    }
     paintLocale();
     if(currentUser){
       try{
