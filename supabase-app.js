@@ -247,8 +247,23 @@
     const entry=expandedCountries.find(item=>item[0]===countryName)||expandedCountries[0];
     const currency=expandedCurrencies[code]||expandedCurrencies.INR;
     activeLocale={country:countryName,flag:entry[1],code,...currency};
-    try{if(currentUser)await window.tripBackend.saveLocale(countryName,code);closeModal();renderResults();toast(`Prices now display in ${code}.`)}
-    catch(err){toast(err.message||'Could not save your currency preference.')}};
+    // Apply the choice immediately so a profile/network error cannot leave the
+    // old currency visible. Authenticated users also save it to their profile.
+    closeModal();
+    renderResults();
+    paintLocale();
+    if(currentUser){
+      try{
+        await window.tripBackend.saveLocale(countryName,code);
+        toast(`Prices now display in ${code}; preference saved to your profile.`);
+      }catch(err){
+        console.warn('Currency preference could not be saved:',err);
+        toast(`Prices now display in ${code}; profile sync failed, but the selection is active for this session.`);
+      }
+      return;
+    }
+    toast(`Prices now display in ${code} for this session.`);
+  };
   window.tripBackend.listenReviews=listenReviews;
   let stripeReturnHandled='';
   async function handleStripeReturn(){
