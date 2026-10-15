@@ -206,8 +206,14 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
   function normalizePlanCosts(generated,tripData){const days=Array.isArray(generated.days)?generated.days:[],stayName=days.find(d=>d.stay)?.stay,stay=(generated.hotels||[]).find(h=>h.name===stayName),nights=Math.max(0,days.length-1),nightly=Number(stay?.price_per_night_inr||0),stayTotal=nightly*nights,budget=Number(tripData.budget_inr||0);if(stay&&stayTotal>budget)return{error:`The catalogue stay costs about ₹${stayTotal.toLocaleString('en-IN')} for ${nights} night(s), above your ₹${budget.toLocaleString('en-IN')} budget. Please raise the budget or shorten the trip.`};const base=days.map((_,i)=>i<nights?nightly:0),raw=days.map((d,i)=>Math.max(base[i],Number(d.est_cost_inr)||0)),rawTotal=raw.reduce((a,b)=>a+b,0),target=Math.min(budget,Math.max(stayTotal,rawTotal||stayTotal)),extras=raw.map((v,i)=>Math.max(0,v-base[i])),extrasTotal=extras.reduce((a,b)=>a+b,0),weights=extrasTotal?extras:days.map(d=>Math.max(1,(d.activities||[]).length)),weightTotal=weights.reduce((a,b)=>a+b,0),extraBudget=Math.max(0,target-stayTotal),normalized=days.map((d,i)=>({...d,est_cost_inr:base[i]+(i===days.length-1?extraBudget-weights.slice(0,i).reduce((sum,w)=>sum+Math.floor(extraBudget*w/weightTotal),0):Math.floor(extraBudget*weights[i]/weightTotal))}));return{plan:{...generated,days:normalized,total_cost_inr:normalized.reduce((sum,d)=>sum+d.est_cost_inr,0)}}}
   function chips(options){const box=add('response-actions',options.map(x=>`<button type="button" data-value="${esc(x.value)}">${esc(x.label)}</button>`).join(''));box.querySelectorAll('button').forEach(b=>b.onclick=()=>ask(b.dataset.value));return box}
   function addWhy(status,explanation){
-    if(status==='Rejected')return '';
-    return `<div class="notice" style="margin:12px 0"><b>Why this plan</b><br>${status==='Approved'?esc(explanation||''):'Being reviewed by our team'}</div>`;
+    const normalized=String(status||'Pending review').toLowerCase();
+    if(normalized==='approved'){
+      return `<div class="notice" style="margin:12px 0"><b>Review status: Approved · Why this plan</b><br>${esc(explanation||'Our team approved this itinerary.')}</div>`;
+    }
+    if(normalized==='rejected'){
+      return '<div class="notice" style="margin:12px 0"><b>Review status: Rejected</b><br>The explanation was not approved by our review team. You can ask me to revise this itinerary.</div>';
+    }
+    return '<div class="notice" style="margin:12px 0"><b>Review status: Pending review</b><br>Being reviewed by our team.</div>';
   }
   function renderPlan(p){
     plan=p;
