@@ -14,12 +14,13 @@
     return;
   }
   const client = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, { auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true} });
+  const currencyFlagForCode=code=>({INR:'🇮🇳',USD:'🇺🇸',EUR:'🇪🇺',GBP:'🇬🇧',AUD:'🇦🇺',CAD:'🇨🇦',NZD:'🇳🇿',AED:'🇦🇪',SAR:'🇸🇦',QAR:'🇶🇦',SGD:'🇸🇬',MYR:'🇲🇾',THB:'🇹🇭',IDR:'🇮🇩',JPY:'🇯🇵',KRW:'🇰🇷',CNY:'🇨🇳',HKD:'🇭🇰',CHF:'🇨🇭',ZAR:'🇿🇦'})[String(code||'').toUpperCase()]||'🌐';
   // Restore the last selected locale immediately; the signed-in profile remains authoritative.
   try {
     const saved=JSON.parse(localStorage.getItem('trip-assistant-locale')||'null');
     const country=expandedCountries.find(item=>item[0]===saved?.country);
     const code=expandedCurrencies[saved?.code]?saved.code:null;
-    if(code){const entry=country||expandedCountries[0];activeLocale={...activeLocale,...expandedCurrencies[code],country:entry[0],flag:entry[1],code};}
+    if(code){const entry=country||expandedCountries[0];activeLocale={...activeLocale,...expandedCurrencies[code],country:entry[0],flag:currencyFlagForCode(code),code};}
   } catch {}
   let currentUser=null, profile=null, reviewChannel=null, wishItems=[],pendingHotelBooking=null;
   const anonName=()=>currentUser?.user_metadata?.full_name||currentUser?.user_metadata?.name||'';
@@ -30,7 +31,7 @@
     const {data,error}=await client.from('profiles').select('*').eq('id',currentUser.id).maybeSingle();
     if(error) throw error;
     profile=data||{id:currentUser.id,email:currentUser.email||'',name:anonName(),mobile:''};
-    if(profile.preferred_currency&&typeof activeLocale==='object'){const option=expandedCurrencies?.[profile.preferred_currency];if(option)activeLocale={...activeLocale,...option,code:profile.preferred_currency,country:profile.preferred_country||activeLocale.country};}
+    if(profile.preferred_currency&&typeof activeLocale==='object'){const option=expandedCurrencies?.[profile.preferred_currency];if(option)activeLocale={...activeLocale,...option,code:profile.preferred_currency,flag:currencyFlagForCode(profile.preferred_currency),country:profile.preferred_country||activeLocale.country};}
     try{paintLocale()}catch{}
     window.dispatchEvent(new CustomEvent('supabase-profile',{detail:{user:currentUser,profile}}));
     const panel=document.getElementById('myra-panel');
@@ -261,7 +262,7 @@
     const code=document.getElementById('localeCurrency')?.value||'INR';
     const entry=expandedCountries.find(item=>item[0]===countryName)||expandedCountries[0];
     const currency=expandedCurrencies[code]||expandedCurrencies.INR;
-    activeLocale={country:countryName,flag:entry[1],code,...currency};
+    activeLocale={country:countryName,flag:currencyFlagForCode(code),code,...currency};
     try{localStorage.setItem('trip-assistant-locale',JSON.stringify({country:countryName,code}));}catch{}
     // Apply the choice immediately so a profile/network error cannot leave the
     // old currency visible. Authenticated users also save it to their profile.
