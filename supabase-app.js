@@ -14,6 +14,13 @@
     return;
   }
   const client = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, { auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true} });
+  // Restore the last selected locale immediately; the signed-in profile remains authoritative.
+  try {
+    const saved=JSON.parse(localStorage.getItem('trip-assistant-locale')||'null');
+    const country=expandedCountries.find(item=>item[0]===saved?.country);
+    const code=expandedCurrencies[saved?.code]?saved.code:null;
+    if(code){const entry=country||expandedCountries[0];activeLocale={...activeLocale,...expandedCurrencies[code],country:entry[0],flag:entry[1],code};}
+  } catch {}
   let currentUser=null, profile=null, reviewChannel=null, wishItems=[],pendingHotelBooking=null;
   const anonName=()=>currentUser?.user_metadata?.full_name||currentUser?.user_metadata?.name||'';
   const esc2=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -24,6 +31,7 @@
     if(error) throw error;
     profile=data||{id:currentUser.id,email:currentUser.email||'',name:anonName(),mobile:''};
     if(profile.preferred_currency&&typeof activeLocale==='object'){const option=expandedCurrencies?.[profile.preferred_currency];if(option)activeLocale={...activeLocale,...option,code:profile.preferred_currency,country:profile.preferred_country||activeLocale.country};}
+    try{paintLocale()}catch{}
     window.dispatchEvent(new CustomEvent('supabase-profile',{detail:{user:currentUser,profile}}));
     const panel=document.getElementById('myra-panel');
     panel?.contentWindow?.postMessage({type:'myra-auth',profile:{name:profile.name||anonName(),email:profile.email||currentUser.email,authenticated:true}},location.origin);
@@ -206,6 +214,12 @@
         const d=b.details_json||{},related=data.itineraries.find(it=>it.id===b.itinerary_id),plan=related?.itinerary_json||{};
         const req=related?data.requests.find(r=>r.id===related.trip_request_id)||{}:{};
         const title=d.service||d.hotel||d.name||d.destination||d.to||'Travel booking';
+        const paidCurrency=String(d.currency||'INR').toUpperCase();
+        const zeroDecimal=['JPY','KRW'].includes(paidCurrency);
+        const minorUnits=Number(d.stripe_amount_minor);
+        const factor=Number(expandedCurrencies?.[paidCurrency]?.factor)||1;
+        const paidAmount=Number.isFinite(minorUnits)&&minorUnits>0?minorUnits/(zeroDecimal?1:100):Number(b.total_inr||0)*factor;
+        const paidTotal=new Intl.NumberFormat(paidCurrency==='INR'?'en-IN':'en-US',{style:'currency',currency:paidCurrency,minimumFractionDigits:zeroDecimal||paidCurrency==='INR'?0:2,maximumFractionDigits:zeroDecimal||paidCurrency==='INR'?0:2}).format(paidAmount);
         const route=[d.from,d.to].filter(Boolean).map(esc2).join(' → ');
         const destination=d.destination||(!route?d.to:'');
         const begin=d.check_in||d.date||d.start_date,finish=d.check_out||d.return_date||d.returnDate||d.end_date;
@@ -219,12 +233,13 @@
           ['Travellers',party?(Array.isArray(party)?party.length+' traveller(s)':esc2(party)+' traveller(s)'):'—'],
           ['Lead traveller',d.name||d.guest||'—'],
           ['Payment method',d.payment_provider==='Stripe'?'Stripe Checkout':d.payment_method||'—'],
+          ['Payment currency',paidCurrency],
           ['Payment status',d.payment_status==='paid'?'Paid':d.payment_status==='pending'?'Pending':d.payment_status||'—']
         ];
         const detailRows=details.map(item=>'<div style="display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #e8edf3"><span style="color:#68778a">'+item[0]+'</span><b style="text-align:right">'+(item[1]==='—'?'—':esc2(item[1]))+'</b></div>').join('');
         const status=d.status||'Confirmed';
         const tripPlan=related?'<details style="margin-top:14px"><summary style="cursor:pointer;color:#0878d1;font-weight:700">View linked itinerary</summary><p>'+esc2(related.itinerary_summary||req.destination||'')+'</p><ul>'+renderDays(plan)+'</ul></details>':'';
-        return '<article class="summary" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap"><div><span style="display:inline-block;color:#137a52;background:#e8f7ef;border-radius:20px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:.04em">'+(d.payment_status==='paid'?'PAYMENT CONFIRMED · STRIPE':d.payment_status==='pending'?'PAYMENT PENDING · STRIPE':'BOOKING')+'</span><h3 style="margin:10px 0 4px">'+esc2(title)+'</h3><p style="margin:0;color:#667085">'+(route||esc2(destination||''))+(dateLine?' · '+esc2(dateLine):'')+'</p></div><div style="text-align:right"><b style="color:#137a52">'+esc2(status)+'</b><div style="font-size:18px;font-weight:800;margin-top:8px">₹'+Number(b.total_inr||0).toLocaleString('en-IN')+'</div><small>Booking total</small></div></div><div style="margin-top:14px">'+detailRows+'</div>'+tripPlan+'</article>';
+        return '<article class="summary" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap"><div><span style="display:inline-block;color:#137a52;background:#e8f7ef;border-radius:20px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:.04em">'+(d.payment_status==='paid'?'PAYMENT CONFIRMED · STRIPE':d.payment_status==='pending'?'PAYMENT PENDING · STRIPE':'BOOKING')+'</span><h3 style="margin:10px 0 4px">'+esc2(title)+'</h3><p style="margin:0;color:#667085">'+(route||esc2(destination||''))+(dateLine?' · '+esc2(dateLine):'')+'</p></div><div style="text-align:right"><b style="color:#137a52">'+esc2(status)+'</b><div style="font-size:18px;font-weight:800;margin-top:8px">'+esc2(paidTotal)+'</div><small>Booking total</small></div></div><div style="margin-top:14px">'+detailRows+'</div>'+tripPlan+'</article>';
       }).join('');
       const cutoff=Date.now()-86400000,partial=data.requests.find(r=>r.status==='in_progress'&&Date.parse(r.updated_at||r.created_at)>=cutoff);
       const content=(partial?'<div class="notice">Continue your '+esc2(partial.destination||'')+' plan? <button class="text-btn" onclick="document.getElementById(\'myra-launcher\').click()">CONTINUE WITH MYRA</button></div>':'')+
@@ -247,6 +262,7 @@
     const entry=expandedCountries.find(item=>item[0]===countryName)||expandedCountries[0];
     const currency=expandedCurrencies[code]||expandedCurrencies.INR;
     activeLocale={country:countryName,flag:entry[1],code,...currency};
+    try{localStorage.setItem('trip-assistant-locale',JSON.stringify({country:countryName,code}));}catch{}
     // Apply the choice immediately so a profile/network error cannot leave the
     // old currency visible. Authenticated users also save it to their profile.
     closeModal();
