@@ -600,23 +600,34 @@ Deno.serve(async (req) => {
       const offbeat = [...(nearbyOffbeat.length ? nearbyOffbeat : offbeatRows)].sort((a: any, b: any) => score(b, true) - score(a, true))[0];
       if (!sightRows.length || !foodRows.length || !offbeat) return json({ ok: false, error: `The ${city} catalogue needs sights, food stops, and at least one less-crowded sight before Myra can make a grounded plan.` }, 422);
       const used = new Set<string>();
+      const usedFood = new Set<string>();
       const maxSights = family ? 2 : trip.pace === 'packed' ? 3 : 2;
       const daySelections: Array<{ sights: any[]; food: any }> = [];
       for (let day = 0; day < count; day++) {
         const unused = [...sightRows].filter((place: any) => !used.has(place.id));
         const nearby = unused.filter((place: any) => km(selectedStay, place) <= 15);
-        const candidates = [...(nearby.length >= Math.max(1, maxSights - (day === 0 && offbeat ? 1 : 0)) ? nearby : unused)]
-          .sort((a: any, b: any) => score(b, day === 0) - score(a, day === 0));
+        const candidates = [...(nearby.length >= Math.max(1, maxSights - (day === 0 && offbeat ? 1 : 0)) ? nearby : unused)];
         const picked: any[] = [];
         if (day === 0 && offbeat) { picked.push(offbeat); used.add(offbeat.id); }
-        for (const place of candidates) {
-          if (picked.length >= maxSights) break;
-          if (used.has(place.id)) continue;
+        while (picked.length < maxSights) {
+          const available = candidates.filter((place: any) => !used.has(place.id));
+          if (!available.length) break;
+          available.sort((a: any, b: any) => {
+            const clusterPenalty = (place: any) => picked.length ? Math.min(...picked.map((selected: any) => km(selected, place))) * 3 : 0;
+            return (score(b, day === 0) - clusterPenalty(b)) - (score(a, day === 0) - clusterPenalty(a));
+          });
+          const place = available[0];
           picked.push(place); used.add(place.id);
         }
         // For longer stays the verified catalogue may be smaller than the day count.
         if (!picked.length) picked.push([...sightRows].sort((a: any, b: any) => score(b, false) - score(a, false))[day % sightRows.length]);
-        const food = [...foodRows].sort((a: any, b: any) => score(b, false) - score(a, false))[day % foodRows.length];
+        const availableFood = foodRows.filter((place: any) => !usedFood.has(place.id));
+        const foodPool = availableFood.length ? availableFood : foodRows;
+        const food = [...foodPool].sort((a: any, b: any) => {
+          const foodRouteScore = (place: any) => (matchesInterest(place) ? 40 : 0) - picked.reduce((total: number, sight: any) => total + km(sight, place), 0) / Math.max(1, picked.length) * 2;
+          return foodRouteScore(b) - foodRouteScore(a);
+        })[0];
+        usedFood.add(food.id);
         daySelections.push({ sights: picked, food });
       }
       const rawExtras = daySelections.map(({ sights, food }) => [...sights.map((place: any) => Math.max(0, Number(place.typical_cost_inr) || 0) * people), Math.max(0, Number(food.typical_cost_inr) || 0) * people]);
@@ -702,4 +713,27 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'create_booking') {
-      if (!userId) return json({ ok: false, re
+      if (!userId) return json({ ok: false, requires_login: true, error: 'Please sign in before booking.' }, 401);
+      const d = body.details && typeof body.details === 'object' ? body.details as Record<string, unknown> : {};
+      const total = Math.floor(Number(body.total_inr));
+      if (!Number.isFinite(total) || total < 0 || total > 100000000) return json({ ok: false, error: 'Invalid booking total.' }, 422);
+      let itineraryId = typeof body.itinerary_id === 'string' ? body.itinerary_id : null;
+      if (itineraryId) {
+        const { data: owned } = await admin.from('itineraries').select('id').eq('id', itineraryId).eq('user_id', userId).maybeSingle();
+        if (!owned) itineraryId = null;
+      }
+      const bookingRef = `TA-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
+      const { data, error } = await admin.from('bookings').insert({ user_id: userId, itinerary_id: itineraryId, booking_ref: bookingRef, details_json: d, total_inr: total }).select('id,booking_ref,created_at').single();
+      if (error) throw error;
+      return json({ ok: true, booking: data });
+    }
+    return json({ error: 'Unknown action' }, 400);
+  } catch (error) {
+    console.error('myra-chat failed:', error);
+    if (error instanceof AiError) {
+      const status = error.code === 'ai_not_configured' || error.code === 'ai_key_invalid' ? 503 : error.code === 'ai_rate_limited' ? 429 : 502;
+      return json({ ok: false, code: error.code, error: error.message }, status);
+    }
+    return json({ ok: false, error: 'The request could not be completed. Please try again.' }, 500);
+  }
+});
