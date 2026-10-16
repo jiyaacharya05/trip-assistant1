@@ -530,7 +530,7 @@ Deno.serve(async (req) => {
       const city = canonicalCity(trip.destination);
       const [{ data: hotelRows, error: hotelError }, { data: placeRows, error: placeError }] = await Promise.all([
         admin.from('catalogue_hotels').select('id,city,name,price_per_night_inr,area,tags,lat,lng,address,photos').ilike('city', city).order('price_per_night_inr'),
-        admin.from('catalogue_places').select('id,city,name,kind,area,lat,lng,offbeat,interests,wiki_title,typical_cost_inr').ilike('city', city),
+        admin.from('catalogue_places').select('id,city,name,kind,area,lat,lng,offbeat,interests,wiki_title,typical_cost_inr,photo_url,photo_credit').ilike('city', city),
       ]);
       if (hotelError || placeError) {
         console.error('Myra catalogue query failed; apply the catalogue media migration first:', hotelError || placeError);
@@ -606,10 +606,10 @@ Deno.serve(async (req) => {
       const times = effectivePace === 'packed' ? ['8:30 AM', '11:00 AM', '1:00 PM', '4:00 PM'] : ['9:00 AM', '11:30 AM', '1:00 PM'];
       const days = daySelections.map(({ sights, food }, i) => {
         const stops = sights.map((place: any, j: number) => ({
-          time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: Number(place.lat), lng: Number(place.lng), wiki_title: place.wiki_title,
+          time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: Number(place.lat), lng: Number(place.lng), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null,
           cost_inr: moneyCost(Math.max(0, Number(place.typical_cost_inr) || 0) * people), reason: place.offbeat ? `A quieter ${place.area} stop that suits your ${trip.interests || 'local discovery'} interests.` : `A ${place.area} visit matched to your ${trip.interests || 'trip'} preferences.`, offbeat: Boolean(place.offbeat),
         }));
-        const foodStop = { time: times[2] || '1:00 PM', name: food.name, kind: 'food', area: food.area, lat: Number(food.lat), lng: Number(food.lng), wiki_title: food.wiki_title,
+        const foodStop = { time: times[2] || '1:00 PM', name: food.name, kind: 'food', area: food.area, lat: Number(food.lat), lng: Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null,
           cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: `A local ${food.area} food stop from the destination catalogue.` };
         const stayNight = i < nights ? Number(selectedStay.price_per_night_inr) * rooms : 0;
         const extras = [...stops.map((stop: any) => stop.cost_inr), foodStop.cost_inr];
@@ -622,7 +622,7 @@ Deno.serve(async (req) => {
       const hotel = { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
       const hotelOptions = options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
       const summary = `${count}-day ${effectivePace} ${family ? 'family ' : ''}plan for ${city}, ${trip.start_date} to ${trip.end_date}. It includes ${rooms} room${rooms === 1 ? '' : 's'} for ${nights} night${nights === 1 ? '' : 's'}, destination-catalogue sights, local food, and a ₹600-per-person daily allowance. Total estimate ₹${total.toLocaleString('en-IN')} stays within your ₹${budget.toLocaleString('en-IN')} budget; airfare is excluded.`;
-      return json({ ok: true, plan: { days, total_cost_inr: total, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_choice_open: false }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: Number(place.lat), lng: Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title })) });
+      return json({ ok: true, plan: { days, total_cost_inr: total, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_choice_open: false }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: Number(place.lat), lng: Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null })) });
     }
 
     if (action === 'save_plan') {
