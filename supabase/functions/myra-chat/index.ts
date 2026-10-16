@@ -560,10 +560,6 @@ Deno.serve(async (req) => {
           minimum_budget_inr: minimum,
         });
       }
-      const requestedStay = String(body.preferred_hotel || '').trim();
-      const requestedRow = options.find((hotel: any) => hotel.name === requestedStay);
-      const selectedStay = requestedRow && (Number(requestedRow.price_per_night_inr) * rooms * nights + dailyFloor * count <= budget) ? requestedRow : cheapestStay;
-      const hotelTotal = Number(selectedStay.price_per_night_inr || 0) * rooms * nights;
       const toRad = (n: number) => n * Math.PI / 180;
       const km = (a: any, b: any) => {
         const R = 6371, dLat = toRad(Number(b.lat) - Number(a.lat)), dLng = toRad(Number(b.lng) - Number(a.lng));
@@ -571,21 +567,46 @@ Deno.serve(async (req) => {
         return 2 * R * Math.asin(Math.sqrt(x));
       };
       const interestWords = String(trip.interests || '').toLowerCase().split(/[^a-z]+/).filter((word: string) => word.length > 2);
-      const score = (place: any, preferOffbeat = false) => {
+      const matchesInterest = (place: any) => {
         const tags: string[] = Array.isArray(place.interests) ? place.interests.map((x: string) => String(x).toLowerCase()) : [];
-        const matched = interestWords.some((word: string) => tags.some(tag => tag.includes(word) || word.includes(tag)));
+        return interestWords.some((word: string) => tags.some((tag: string) => tag.includes(word) || word.includes(tag)));
+      };
+      const affordableOptions = options.filter((hotel: any) => Number(hotel.price_per_night_inr || 0) * rooms * nights + dailyFloor * count <= budget);
+      const hotelFit = (hotel: any) => {
+        const closePlaces = places.filter((place: any) => km(hotel, place) <= 15);
+        const closeMatches = closePlaces.filter(matchesInterest).length;
+        const familyFit = family && hotel.tags?.includes('family-friendly') ? 12 : 0;
+        const offbeatFit = !family && hotel.tags?.includes('offbeat') ? 5 : 0;
+        // Prefer a stay near several catalogue stops that fit the user's interests.
+        // A small price penalty keeps the choice affordable without defaulting
+        // to a cheaper base that forces long drives every day.
+        return closeMatches * 40 + Math.min(closePlaces.length, 8) * 3 + familyFit + offbeatFit - Number(hotel.price_per_night_inr || 0) / 1000 * 1.5;
+      };
+      const requestedStay = String(body.preferred_hotel || '').trim();
+      const requestedRow = options.find((hotel: any) => hotel.name === requestedStay);
+      const selectedStay = requestedRow && affordableOptions.includes(requestedRow)
+        ? requestedRow
+        : [...affordableOptions].sort((a: any, b: any) => hotelFit(b) - hotelFit(a))[0] || cheapestStay;
+      const hotelTotal = Number(selectedStay.price_per_night_inr || 0) * rooms * nights;
+      const score = (place: any, preferOffbeat = false) => {
+        const matched = matchesInterest(place);
         const distance = km(selectedStay, place);
-        return (matched ? 100 : 0) + (distance <= 15 ? 50 : Math.max(0, 15 - Math.min(distance, 60))) + (preferOffbeat && place.offbeat ? 80 : 0) - Math.min(distance, 120) / 20;
+        return (matched ? 100 : 0) + (distance <= 15 ? 70 : 15 - Math.min(distance, 60)) + (preferOffbeat && place.offbeat ? 80 : 0) - Math.max(0, distance - 15) * 1.5;
       };
       const sightRows = places.filter((place: any) => place.kind === 'sight');
       const foodRows = places.filter((place: any) => place.kind === 'food');
-      const offbeat = [...sightRows].filter((place: any) => place.offbeat).sort((a: any, b: any) => score(b, true) - score(a, true))[0];
+      const offbeatRows = [...sightRows].filter((place: any) => place.offbeat);
+      const nearbyOffbeat = offbeatRows.filter((place: any) => km(selectedStay, place) <= 15);
+      const offbeat = [...(nearbyOffbeat.length ? nearbyOffbeat : offbeatRows)].sort((a: any, b: any) => score(b, true) - score(a, true))[0];
       if (!sightRows.length || !foodRows.length || !offbeat) return json({ ok: false, error: `The ${city} catalogue needs sights, food stops, and at least one less-crowded sight before Myra can make a grounded plan.` }, 422);
       const used = new Set<string>();
       const maxSights = family ? 2 : trip.pace === 'packed' ? 3 : 2;
       const daySelections: Array<{ sights: any[]; food: any }> = [];
       for (let day = 0; day < count; day++) {
-        let candidates = [...sightRows].filter((place: any) => !used.has(place.id)).sort((a: any, b: any) => score(b, day === 0) - score(a, day === 0));
+        const unused = [...sightRows].filter((place: any) => !used.has(place.id));
+        const nearby = unused.filter((place: any) => km(selectedStay, place) <= 15);
+        const candidates = [...(nearby.length >= Math.max(1, maxSights - (day === 0 && offbeat ? 1 : 0)) ? nearby : unused)]
+          .sort((a: any, b: any) => score(b, day === 0) - score(a, day === 0));
         const picked: any[] = [];
         if (day === 0 && offbeat) { picked.push(offbeat); used.add(offbeat.id); }
         for (const place of candidates) {
@@ -607,10 +628,10 @@ Deno.serve(async (req) => {
       const days = daySelections.map(({ sights, food }, i) => {
         const stops = sights.map((place: any, j: number) => ({
           time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: Number(place.lat), lng: Number(place.lng), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null,
-          cost_inr: moneyCost(Math.max(0, Number(place.typical_cost_inr) || 0) * people), reason: place.offbeat ? `A quieter ${place.area} stop that suits your ${trip.interests || 'local discovery'} interests.` : `A ${place.area} visit matched to your ${trip.interests || 'trip'} preferences.`, offbeat: Boolean(place.offbeat),
+          cost_inr: moneyCost(Math.max(0, Number(place.typical_cost_inr) || 0) * people), reason: place.offbeat ? `A quieter stop in ${place.area}, chosen for your ${trip.interests || 'local discovery'} interests${km(selectedStay, place) <= 15 ? ' and close to your stay' : '; allow time for the drive'}.` : `Visit ${place.name} in ${place.area} for your ${trip.interests || 'local discovery'} interests.`, offbeat: Boolean(place.offbeat),
         }));
         const foodStop = { time: times[2] || '1:00 PM', name: food.name, kind: 'food', area: food.area, lat: Number(food.lat), lng: Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null,
-          cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: `A local ${food.area} food stop from the destination catalogue.` };
+          cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: `Try ${food.name} in ${food.area} as a local food stop.` };
         const stayNight = i < nights ? Number(selectedStay.price_per_night_inr) * rooms : 0;
         const extras = [...stops.map((stop: any) => stop.cost_inr), foodStop.cost_inr];
         const dailyCost = stayNight + dailyFloor + extras.reduce((sum: number, value: number) => sum + value, 0);
@@ -681,27 +702,4 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'create_booking') {
-      if (!userId) return json({ ok: false, requires_login: true, error: 'Please sign in before booking.' }, 401);
-      const d = body.details && typeof body.details === 'object' ? body.details as Record<string, unknown> : {};
-      const total = Math.floor(Number(body.total_inr));
-      if (!Number.isFinite(total) || total < 0 || total > 100000000) return json({ ok: false, error: 'Invalid booking total.' }, 422);
-      let itineraryId = typeof body.itinerary_id === 'string' ? body.itinerary_id : null;
-      if (itineraryId) {
-        const { data: owned } = await admin.from('itineraries').select('id').eq('id', itineraryId).eq('user_id', userId).maybeSingle();
-        if (!owned) itineraryId = null;
-      }
-      const bookingRef = `TA-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
-      const { data, error } = await admin.from('bookings').insert({ user_id: userId, itinerary_id: itineraryId, booking_ref: bookingRef, details_json: d, total_inr: total }).select('id,booking_ref,created_at').single();
-      if (error) throw error;
-      return json({ ok: true, booking: data });
-    }
-    return json({ error: 'Unknown action' }, 400);
-  } catch (error) {
-    console.error('myra-chat failed:', error);
-    if (error instanceof AiError) {
-      const status = error.code === 'ai_not_configured' || error.code === 'ai_key_invalid' ? 503 : error.code === 'ai_rate_limited' ? 429 : 502;
-      return json({ ok: false, code: error.code, error: error.message }, status);
-    }
-    return json({ ok: false, error: 'The request could not be completed. Please try again.' }, 500);
-  }
-});
+      if (!userId) return json({ ok: false, re
