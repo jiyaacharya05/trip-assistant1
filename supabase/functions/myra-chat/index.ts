@@ -537,17 +537,33 @@ Deno.serve(async (req) => {
         return json({ ok: false, error: 'Myra’s hotel and place catalogue is not ready yet. Apply the 202610160001 catalogue media migration, then try again.' }, 503);
       }
       const catalogue = Array.isArray(hotelRows) ? hotelRows : [];
-      const places = Array.isArray(placeRows) ? placeRows : [];
+      let places: any[] = Array.isArray(placeRows) ? placeRows : [];
       const count = dayCount(trip);
       const nights = Math.max(0, count - 1);
       const people = Math.max(1, Number(trip.travellers_count) || (trip.travellers_type === 'solo' ? 1 : trip.travellers_type === 'couple' ? 2 : trip.travellers_type === 'family' ? 4 : 3));
       const family = trip.travellers_type === 'family';
       const effectivePace = family ? 'relaxed' : (trip.pace || 'normal');
       const rooms = family && people >= 4 && people <= 5 ? 2 : Math.max(1, Math.ceil(people / 2));
+      // Destinations outside the curated catalogue: build the plan from sights
+      // and dishes verified on Wikipedia (exact article, own photo, near the city).
+      let groundedDest: any = null;
+      if (places.length < 12) {
+        const grounded = await groundedPlacesFor(trip.destination, trip.interests, count, groq);
+        groundedDest = grounded.dest;
+        const verifiedSights = grounded.places.filter((p: any) => p.kind === 'sight').length;
+        const verifiedFood = grounded.places.filter((p: any) => p.kind === 'food').length;
+        if (!groundedDest || verifiedSights < 2 || !verifiedFood) {
+          return json({ ok: false, catalogue_missing: true, error: `I couldn’t find enough verified sights and local food for ${trip.destination} yet. Try the main city name (for example “Shillong” for Meghalaya) and I’ll plan it.` }, 422);
+        }
+        places = grounded.places;
+      }
+      const international = groundedDest ? !/\bindia\b/i.test(String(groundedDest.description || '')) : false;
+      const stayAllowance = international ? 9000 : 2500;
+      const allowanceStay = !catalogue.length;
       const suitable = catalogue.filter((hotel: any) => !family || hotel.tags?.includes('family-friendly'));
-      const options = suitable.length ? suitable : catalogue;
-      if (!catalogue.length) return json({ ok: false, catalogue_missing: true, error: `I don’t have catalogue hotel stays for ${city} yet, so I can’t create a stay-based plan without inventing a hotel.` }, 422);
-      if (places.length < 12) return json({ ok: false, catalogue_missing: true, error: `I don’t have enough destination-specific sights and food entries for ${city} yet to build a grounded itinerary.` }, 422);
+      const options = allowanceStay
+        ? [{ id: null, city, name: OPEN_STAY, price_per_night_inr: stayAllowance, area: trip.destination, tags: [], lat: groundedDest?.lat ?? null, lng: groundedDest?.lng ?? null, address: trip.destination, photos: [] }]
+        : (suitable.length ? suitable : catalogue);
       const dailyFloor = 600 * people;
       const budget = Number(trip.budget_inr || 0);
       const cheapestStay = options[0];
@@ -556,12 +572,13 @@ Deno.serve(async (req) => {
       if (minimum > budget) {
         return json({
           ok: true, budget_too_low: true,
-          reply: `Your budget looks too low for this trip. The minimum realistic budget is ₹${minimum.toLocaleString('en-IN')} (stay ₹${cheapestHotelTotal.toLocaleString('en-IN')} for ${rooms} room${rooms === 1 ? '' : 's'} × ${nights} night${nights === 1 ? '' : 's'}, plus ₹600 per person per day for ${people} traveller${people === 1 ? '' : 's'}).`,
+          reply: `Your budget looks too low for this trip. The minimum realistic budget is ₹${minimum.toLocaleString('en-IN')} (stay ₹${cheapestHotelTotal.toLocaleString('en-IN')} for ${rooms} room${rooms === 1 ? '' : 's'} × ${nights} night${nights === 1 ? '' : 's'}${allowanceStay ? ' at an estimated ₹' + stayAllowance.toLocaleString('en-IN') + ' per room per night' : ''}, plus ₹600 per person per day for ${people} traveller${people === 1 ? '' : 's'}).`,
           minimum_budget_inr: minimum,
         });
       }
       const toRad = (n: number) => n * Math.PI / 180;
       const km = (a: any, b: any) => {
+        if (a?.lat == null || a?.lng == null || b?.lat == null || b?.lng == null) return 10;
         const R = 6371, dLat = toRad(Number(b.lat) - Number(a.lat)), dLng = toRad(Number(b.lng) - Number(a.lng));
         const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(Number(a.lat))) * Math.cos(toRad(Number(b.lat))) * Math.sin(dLng / 2) ** 2;
         return 2 * R * Math.asin(Math.sqrt(x));
@@ -638,10 +655,10 @@ Deno.serve(async (req) => {
       const times = effectivePace === 'packed' ? ['8:30 AM', '11:00 AM', '1:00 PM', '4:00 PM'] : ['9:00 AM', '11:30 AM', '1:00 PM'];
       const days = daySelections.map(({ sights, food }, i) => {
         const stops = sights.map((place: any, j: number) => ({
-          time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: Number(place.lat), lng: Number(place.lng), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null,
+          time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null,
           cost_inr: moneyCost(Math.max(0, Number(place.typical_cost_inr) || 0) * people), reason: place.offbeat ? `A quieter stop in ${place.area}, chosen for your ${trip.interests || 'local discovery'} interests${km(selectedStay, place) <= 15 ? ' and close to your stay' : '; allow time for the drive'}.` : `Visit ${place.name} in ${place.area} for your ${trip.interests || 'local discovery'} interests.`, offbeat: Boolean(place.offbeat),
         }));
-        const foodStop = { time: times[2] || '1:00 PM', name: food.name, kind: 'food', area: food.area, lat: Number(food.lat), lng: Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null,
+        const foodStop = { time: times[2] || '1:00 PM', name: food.name, kind: 'food', area: food.area, lat: food.lat == null ? null : Number(food.lat), lng: food.lng == null ? null : Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null, source_url: food.source_url || null, veg: typeof food.veg === 'boolean' ? food.veg : null,
           cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: `Try ${food.name} in ${food.area} as a local food stop.` };
         const stayNight = i < nights ? Number(selectedStay.price_per_night_inr) * rooms : 0;
         const extras = [...stops.map((stop: any) => stop.cost_inr), foodStop.cost_inr];
@@ -651,10 +668,17 @@ Deno.serve(async (req) => {
         return { day: i + 1, date: new Date(Date.parse(`${trip.start_date}T00:00:00Z`) + i * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), stay: selectedStay.name, stops, food_stop: foodStop, rest_note: family ? 'Leave a relaxed rest break at the family-friendly stay for children and elders.' : '', activities, reasons, est_cost_inr: dailyCost };
       });
       const total = days.reduce((sum: number, day: any) => sum + day.est_cost_inr, 0);
-      const hotel = { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
-      const hotelOptions = options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
-      const summary = `${count}-day ${effectivePace} ${family ? 'family ' : ''}plan for ${city}, ${trip.start_date} to ${trip.end_date}. It includes ${rooms} room${rooms === 1 ? '' : 's'} for ${nights} night${nights === 1 ? '' : 's'}, destination-catalogue sights, local food, and a ₹600-per-person daily allowance. Total estimate ₹${total.toLocaleString('en-IN')} stays within your ₹${budget.toLocaleString('en-IN')} budget; airfare is excluded.`;
-      return json({ ok: true, plan: { days, total_cost_inr: total, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_choice_open: false }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: Number(place.lat), lng: Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null })) });
+      const hotel = allowanceStay ? null : { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
+      const hotelOptions = allowanceStay ? [] : options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
+      const placeLabel = groundedDest ? groundedDest.title : city;
+      const stayText = allowanceStay
+        ? `a stay allowance of ₹${stayAllowance.toLocaleString('en-IN')} per room per night (${rooms} room${rooms === 1 ? '' : 's'} × ${nights} night${nights === 1 ? '' : 's'}; an estimate, not a booking)`
+        : `${rooms} room${rooms === 1 ? '' : 's'} for ${nights} night${nights === 1 ? '' : 's'}`;
+      const summary = `${count}-day ${effectivePace} ${family ? 'family ' : ''}plan for ${placeLabel}, ${trip.start_date} to ${trip.end_date}. It includes ${stayText}, ${groundedDest ? 'sights and local food verified on Wikipedia' : 'destination-catalogue sights, local food'}, and a ₹600-per-person daily allowance. Total estimate ₹${total.toLocaleString('en-IN')} stays within your ₹${budget.toLocaleString('en-IN')} budget; airfare is excluded.`;
+      const catalogueNote = allowanceStay
+        ? `I don’t have sample hotels for ${placeLabel} yet, so I haven’t named one. The total includes an estimated ₹${stayAllowance.toLocaleString('en-IN')} per room per night; choose a stay in Hotels.`
+        : '';
+      return json({ ok: true, catalogue_note: catalogueNote, plan: { days, total_cost_inr: total, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_allowance_inr: allowanceStay ? stayAllowance : null, stay_choice_open: allowanceStay, destination_photo: groundedDest?.photo || null, destination_title: groundedDest?.title || null }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null })) });
     }
 
     if (action === 'save_plan') {
@@ -737,3 +761,153 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'The request could not be completed. Please try again.' }, 500);
   }
 });
+
+// Wikipedia-grounded itineraries for destinations that are not in Myra's
+// curated catalogue. Myra's AI only proposes exact Wikipedia article titles.
+// Every sight and dish is then checked against Wikipedia: the article must
+// exist, carry its own lead photo, and (for sights) sit near the destination.
+// Anything that fails is dropped, so every photo, name and map pin shown in
+// the chat belongs to the exact place or dish it labels.
+
+const WIKI_API = 'https://en.wikipedia.org/w/api.php';
+const WIKI_HEADERS = { 'User-Agent': 'TripAssistant-Myra/1.0 (https://tripassistant.ai.studio)', 'Api-User-Agent': 'TripAssistant-Myra/1.0 (https://tripassistant.ai.studio)' };
+
+type WikiPage = { title: string; description: string; lat: number | null; lng: number | null; photo: string | null; url: string };
+
+async function wikiQuery(params: Record<string, string | number>): Promise<any[]> {
+  const qs = new URLSearchParams({ format: 'json', formatversion: '2', ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9000);
+  try {
+    const res = await fetch(`${WIKI_API}?${qs}`, { headers: WIKI_HEADERS, signal: controller.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.query?.pages) ? data.query.pages : [];
+  } catch (err) {
+    console.warn('Wikipedia lookup failed:', err);
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function toPage(p: any): WikiPage {
+  const c = Array.isArray(p.coordinates) ? p.coordinates[0] : null;
+  return {
+    title: String(p.title || ''),
+    description: String(p.description || ''),
+    lat: c && Number.isFinite(Number(c.lat)) ? Number(c.lat) : null,
+    lng: c && Number.isFinite(Number(c.lon)) ? Number(c.lon) : null,
+    photo: p.thumbnail?.source ? String(p.thumbnail.source) : null,
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(p.title || '').replace(/ /g, '_'))}`,
+  };
+}
+
+const PAGE_PROPS = { prop: 'coordinates|description|pageimages', piprop: 'thumbnail', pithumbsize: 640, redirects: 1 };
+
+/** Find the destination's own Wikipedia article (city, region or state) with coordinates. */
+async function resolveDestination(destination: string): Promise<(WikiPage & { isRegion: boolean }) | null> {
+  const pages = await wikiQuery({ action: 'query', generator: 'search', gsrsearch: destination, gsrlimit: 5, ...PAGE_PROPS });
+  const ordered = pages.sort((a, b) => (a.index ?? 99) - (b.index ?? 99)).map(toPage).filter(p => p.lat !== null);
+  const place = ordered.find(p => /\b(city|town|state|territory|district|region|island|archipelago|hill station|capital|metropolis|municipal|village|beach|valley|UNESCO|ruins|pilgrimage)\b/i.test(p.description)) || ordered[0];
+  if (!place) return null;
+  const isRegion = /\b(state|union territory|region|archipelago|islands|country)\b/i.test(place.description) && !/\b(city|town|capital of|municipal)\b/i.test(place.description);
+  return { ...place, isRegion };
+}
+
+/** Look up exact titles (max 50 per call) and return the pages that really exist. */
+async function lookupTitles(titles: string[]): Promise<Map<string, WikiPage>> {
+  const clean = [...new Set(titles.map(t => String(t || '').replace(/_/g, ' ').trim()).filter(t => t && t.length < 120))].slice(0, 50);
+  const found = new Map<string, WikiPage>();
+  if (!clean.length) return found;
+  const pages = await wikiQuery({ action: 'query', titles: clean.join('|'), ...PAGE_PROPS });
+  // Map redirect/normalised titles back to what was asked for.
+  for (const p of pages) {
+    if (p.missing || p.invalid) continue;
+    found.set(String(p.title).toLowerCase(), toPage(p));
+  }
+  return found;
+}
+
+/** Real sights near a point that have their own photo (used to widen the AI's choices). */
+async function nearbySights(lat: number, lng: number): Promise<WikiPage[]> {
+  const pages = await wikiQuery({ action: 'query', generator: 'geosearch', ggscoord: `${lat}|${lng}`, ggsradius: 10000, ggslimit: 80, ...PAGE_PROPS, prop: 'coordinates|description|pageimages|info' });
+  return pages.map(p => ({ ...toPage(p), length: Number(p.length || 0) }))
+    .filter(p => p.photo && p.lat !== null && SIGHT_WORDS.test(`${p.title} ${p.description}`) && !NOT_A_SIGHT.test(p.description))
+    .sort((a: any, b: any) => b.length - a.length)
+    .slice(0, 25);
+}
+
+const SIGHT_WORDS = /\b(temple|mandir|fort|palace|mahal|museum|lake|ghat|mosque|masjid|dargah|church|cathedral|basilica|gurudwara|gurdwara|monastery|gompa|stupa|park|garden|beach|falls|waterfall|monument|tomb|mausoleum|stepwell|baoli|market|bazaar|zoo|sanctuary|national park|hill|peak|viewpoint|gate|memorial|dam|cave|caves|island|bridge|heritage|archaeological|ruins|observatory|aquarium|botanical|reserve|valley|riverfront|promenade|haveli|shrine|pilgrimage|tourist|attraction|landmark|site|fortress|castle|square|pass|glacier|tea estate|plantation|backwaters|spring)\b/i;
+const NOT_A_SIGHT = /\b(constituency|railway station|school|college|university|institute|hospital|company|airport|bus station|metro station|ward|suburb|neighbourhood|neighborhood|tehsil|hotel|stadium|cinema|newspaper|bank|ministry|office|court|club|software|film|album|politician|census|lok sabha|assembly|organisation|organization|party)\b/i;
+const FOOD_WORDS = /\b(dish|food|cuisine|sweet|snack|bread|curry|dessert|beverage|drink|rice|street food|pastry|chutney|confection|delicacy|flatbread|dumpling|fritter|pickle|tea|coffee|soup|stew|kebab|kabab|biryani|meal|condiment|chaat|pudding|yogurt|yoghurt|cake|noodle|pancake|porridge|sauce|lentil|fish|meat|savoury|savory|cookie|wine|liquor|spirit|thali|platter)\b/i;
+
+function kmBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const r = (n: number) => n * Math.PI / 180, R = 6371;
+  const dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+type Groq = (messages: unknown[], temperature?: number) => Promise<any>;
+
+/**
+ * Build a verified list of sights and dishes for any destination.
+ * Returns rows in the same shape as catalogue_places so the normal planner can use them.
+ */
+async function groundedPlacesFor(destination: string, interests: string, days: number, groq: Groq) {
+  const dest = await resolveDestination(destination);
+  if (!dest || dest.lat === null || dest.lng === null) return { dest: null, places: [] as any[] };
+  const center = { lat: dest.lat, lng: dest.lng as number };
+  const nearby = dest.isRegion ? [] : await nearbySights(center.lat, center.lng);
+  const wantSights = Math.min(24, Math.max(10, days * 3 + 4));
+  const wantDishes = Math.min(12, Math.max(6, days + 3));
+  let ai: any = {};
+  try {
+    ai = await groq([
+      { role: 'system', content: 'You are a careful travel researcher. Return JSON only. Every "title" must be the exact title of an existing English Wikipedia article about that exact place or dish. Never invent titles, hotels, prices or places. Prefer well-known sights plus genuinely less-crowded local ones.' },
+      { role: 'user', content: JSON.stringify({
+        destination: dest.title, about: dest.description, traveller_interests: interests || 'local culture and food',
+        candidate_sights_found_nearby: nearby.map(p => p.title),
+        task: `List ${wantSights} sights to visit in or within a short day trip of ${dest.title} (include the candidates that fit, and add other famous sights by exact Wikipedia title), and ${wantDishes} local dishes, sweets or drinks that ${dest.title} or its state is known for, by exact Wikipedia title.`,
+        format: { sights: [{ title: 'exact Wikipedia title', area: 'neighbourhood or nearby town', offbeat: 'true if less crowded', interests: ['nature|history|culture|food|temples|beaches|shopping|adventure|art|architecture|wildlife|spiritual|photography'], entry_fee_inr: 0 }], dishes: [{ title: 'exact Wikipedia title', where_to_try: 'area or market in the destination', veg: true, cost_per_person_inr: 150 }] },
+      }) },
+    ], 0.2);
+  } catch (err) {
+    console.warn('Groq could not suggest grounded places:', err);
+  }
+  const aiSights: any[] = Array.isArray(ai?.sights) ? ai.sights : [];
+  const aiDishes: any[] = Array.isArray(ai?.dishes) ? ai.dishes : [];
+  const found = await lookupTitles([...aiSights.map(s => s?.title), ...aiDishes.map(d => d?.title)]);
+  const byTitle = (title: unknown) => found.get(String(title || '').replace(/_/g, ' ').trim().toLowerCase())
+    || [...found.values()].find(p => p.title.toLowerCase() === String(title || '').replace(/_/g, ' ').trim().toLowerCase());
+  const maxKm = dest.isRegion ? 700 : 90;
+  const destWords = dest.title.split(/[ ,]+/)[0].toLowerCase();
+  const rows: any[] = [];
+  const seen = new Set<string>();
+  const addRow = (row: any) => { const key = `${row.kind}:${row.wiki_title.toLowerCase()}`; if (!seen.has(key)) { seen.add(key); rows.push(row); } };
+  for (const s of aiSights) {
+    const page = byTitle(s?.title);
+    if (!page || !page.photo) continue;
+    if (FOOD_WORDS.test(page.description) && !SIGHT_WORDS.test(page.description)) continue;
+    if (NOT_A_SIGHT.test(page.description)) continue;
+    if (page.lat !== null && page.lng !== null) {
+      if (kmBetween(center, { lat: page.lat, lng: page.lng }) > maxKm) continue;
+    } else if (!page.description.toLowerCase().includes(destWords)) continue;
+    addRow({ id: `wiki-s-${rows.length}`, kind: 'sight', name: page.title.replace(/\s*\((?:[^)]*)\)\s*$/, ''), wiki_title: page.title, area: String(s?.area || page.description || dest.title).slice(0, 80), lat: page.lat, lng: page.lng, offbeat: s?.offbeat === true || s?.offbeat === 'true', interests: Array.isArray(s?.interests) ? s.interests.map(String).slice(0, 6) : [], typical_cost_inr: Math.min(2000, Math.max(0, Math.round(Number(s?.entry_fee_inr) || 0))), photo_url: page.photo, photo_credit: 'Wikipedia', source_url: page.url, description: page.description });
+  }
+  // Fill gaps with verified nearby sights (they already have photos and coordinates).
+  for (const p of nearby) {
+    if (rows.filter(r => r.kind === 'sight').length >= wantSights) break;
+    addRow({ id: `wiki-s-${rows.length}`, kind: 'sight', name: p.title, wiki_title: p.title, area: p.description.slice(0, 80) || dest.title, lat: p.lat, lng: p.lng, offbeat: false, interests: [], typical_cost_inr: 0, photo_url: p.photo, photo_credit: 'Wikipedia', source_url: p.url, description: p.description });
+  }
+  for (const d of aiDishes) {
+    const page = byTitle(d?.title);
+    if (!page || !page.photo || !FOOD_WORDS.test(`${page.title} ${page.description}`)) continue;
+    addRow({ id: `wiki-f-${rows.length}`, kind: 'food', name: page.title.replace(/\s*\((?:[^)]*)\)\s*$/, ''), wiki_title: page.title, area: String(d?.where_to_try || dest.title).slice(0, 80), lat: null, lng: null, offbeat: false, interests: ['food'], typical_cost_inr: Math.min(1500, Math.max(50, Math.round(Number(d?.cost_per_person_inr) || 200))), photo_url: page.photo, photo_credit: 'Wikipedia', source_url: page.url, veg: d?.veg === true || d?.veg === 'true', description: page.description });
+  }
+  // Make sure at least one sight is marked less-crowded: pick the least-known verified one.
+  const sights = rows.filter(r => r.kind === 'sight');
+  if (sights.length && !sights.some(r => r.offbeat)) sights[sights.length - 1].offbeat = true;
+  return { dest, places: rows };
+}
