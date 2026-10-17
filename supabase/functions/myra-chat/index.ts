@@ -157,13 +157,13 @@ function cleanTrip(raw: Record<string, unknown> = {}) {
   let endDate = startDate && requestedEndDate && requestedEndDate < startDate ? null : requestedEndDate;
   const durationDays = Number.isInteger(duration) && duration >= 1 && duration <= 60 ? duration : null;
   return {
-    destination: isUsableDestination(raw.destination) ? String(raw.destination).trim().slice(0, 100) : '',
+    destination: isUsableDestination(raw.destination) ? String(raw.destination).trim().replace(/\s+(?:for|with)(?:\s+(?:a|an|the|my|our))?\s*$/i, '').trim().slice(0, 100) : '',
     start_date: startDate,
     end_date: endDate,
     duration_days: durationDays,
     budget_inr: Number.isFinite(budget) && budget > 0 && budget <= 100000000 ? Math.floor(budget) : null,
     travellers_type: validTravellers.has(travellers) ? travellers : null,
-    travellers_count: Number.isInteger(travellersCount) && travellersCount >= 1 && travellersCount <= 30 ? travellersCount : (travellers === 'solo' ? 1 : travellers === 'couple' ? 2 : travellers === 'family' ? 4 : travellers === 'friends' ? 3 : null),
+    travellers_count: Number.isInteger(travellersCount) && travellersCount >= (travellers === 'couple' ? 2 : travellers === 'family' ? 3 : travellers === 'friends' ? 2 : 1) && travellersCount <= 30 ? travellersCount : (travellers === 'solo' ? 1 : travellers === 'couple' ? 2 : travellers === 'family' ? 4 : travellers === 'friends' ? 3 : null),
     interests: String(raw.interests || '').trim().slice(0, 300),
     pace: validPaces.has(pace) ? pace : (travellers === 'family' ? 'relaxed' : null),
   };
