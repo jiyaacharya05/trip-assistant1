@@ -107,10 +107,23 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
   }
   if (foundDates.length > 1) { next.start_date = foundDates[0]; next.end_date = foundDates[1]; }
   else if (foundDates.length === 1) { if (expected === 'end_date' || (current.start_date && !current.end_date)) next.end_date = foundDates[0]; else next.start_date = foundDates[0]; }
-  const amount = lower.match(/(?:₹|\brs\.?\s*|\binr\s*|\busd\s*|\$)(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|lakh|lac|l)?\b/i)
-    || lower.match(/\bbudget\b[^\d₹$]{0,24}(?:₹|rs\.?\s*|inr\s*|usd\s*|\$\s*)?(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|lakh|lac|l)?\b/i)
-    || lower.match(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:rupees?|inr)\b/i)
-    || (expected === 'budget_inr' ? lower.match(/\b(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|lakh|lac|l)?\b/i) : null);
+  const currencyCodes = 'inr|usd|eur|gbp|aud|cad|nzd|aed|sar|qar|sgd|myr|thb|idr|jpy|krw|cny|hkd|chf|zar';
+  const amount = lower.match(new RegExp('(?:₹|\\brs\\.?\\s*|\\b(?:' + currencyCodes + ')\\s*|\\$|€|£)(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b','i'))
+    || lower.match(new RegExp('\\b(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\s*(?:' + currencyCodes + ')\\b','i'))
+    || lower.match(new RegExp('\\bbudget\\b[^\\d₹$]{0,24}(?:₹|rs\\.?\\s*|(?:' + currencyCodes + ')\\s*|\\$\\s*)?(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b','i'))
+    || lower.match(/\\b(\\d[\\d,]*(?:\\.\\d+)?)\\s*(?:rupees?|inr)\\b/i)
+    || (expected === 'budget_inr' ? lower.match(/\\b(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b/i) : null);
+  if (amount) {
+    const unit = (amount[2] || '').toLowerCase();
+    const base = Number(amount[1].replaceAll(',','')) * (unit === 'k' || unit === 'thousand' ? 1000 : ['l','lac','lakh'].includes(unit) ? 100000 : 1);
+    const factors: Record<string,number> = { INR:1, USD:.012, EUR:.011, GBP:.0094, AUD:.018, CAD:.016, NZD:.020, AED:.044, SAR:.045, QAR:.044, SGD:.016, MYR:.050, THB:.44, IDR:185, JPY:1.78, KRW:16.6, CNY:.086, HKD:.094, CHF:.010, ZAR:.22 };
+    const explicitInr = /₹|\\brs\\.?|\\binr\\b|\\brupees?\\b/i.test(lower);
+    const explicitCode = lower.match(new RegExp('\\b(' + currencyCodes + ')\\b','i'))?.[1]?.toUpperCase();
+    const explicitSymbolCurrency = /€/.test(lower) ? 'EUR' : /£/.test(lower) ? 'GBP' : /\\$/.test(lower) ? 'USD' : null;
+    const sourceCurrency = explicitCode || explicitSymbolCurrency || String(displayCurrency || 'INR').toUpperCase();
+    const factor = explicitInr ? 1 : (factors[sourceCurrency] || 1);
+    next.budget_inr = Math.round(base / factor);
+  }
   if (amount) { const unit = (amount[2] || '').toLowerCase(), raw = amount[0]; const base = Number(amount[1].replaceAll(',','')) * (unit === 'k' || unit === 'thousand' ? 1000 : ['l','lac','lakh'].includes(unit) ? 100000 : 1); const explicitInr = /₹|\brs\.?|\binr\b|\brupees?\b/i.test(lower); const explicitUsd = /\$|\busd\b|\bus\s*dollars?\b/i.test(lower); const factors: Record<string,number> = { INR:1, USD:.012, EUR:.011, GBP:.0094, AUD:.018, CAD:.016, NZD:.020, AED:.044, SAR:.045, QAR:.044, SGD:.016, MYR:.050, THB:.44, IDR:185, JPY:1.78, KRW:16.6, CNY:.086, HKD:.094, CHF:.010, ZAR:.22 }; const factor = explicitInr ? 1 : (explicitUsd ? .012 : (factors[String(displayCurrency || 'INR').toUpperCase()] || 1)); next.budget_inr = Math.round(base / factor); }
   if (/\bfamily\b|\b(kids?|children|elders?)\b/.test(lower)) next.travellers_type = 'family';
   else if (/\bsolo\b/.test(lower)) next.travellers_type = 'solo'; else if (/\bcouple\b|\bpartners?\b/.test(lower)) next.travellers_type = 'couple'; else if (/\bfriends?\b|\bgroup\b/.test(lower)) next.travellers_type = 'friends';
