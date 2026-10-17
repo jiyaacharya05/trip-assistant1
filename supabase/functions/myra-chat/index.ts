@@ -670,7 +670,7 @@ Deno.serve(async (req) => {
       const total = days.reduce((sum: number, day: any) => sum + day.est_cost_inr, 0);
       const hotel = allowanceStay ? null : { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
       const hotelOptions = allowanceStay ? [] : options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
-      const placeLabel = groundedDest ? groundedDest.title : city;
+      const placeLabel = groundedDest ? (groundedDest.base ? `${groundedDest.title} (based in ${groundedDest.base})` : groundedDest.title) : city;
       const stayText = allowanceStay
         ? `a stay allowance of ₹${stayAllowance.toLocaleString('en-IN')} per room per night (${rooms} room${rooms === 1 ? '' : 's'} × ${nights} night${nights === 1 ? '' : 's'}; an estimate, not a booking)`
         : `${rooms} room${rooms === 1 ? '' : 's'} for ${nights} night${nights === 1 ? '' : 's'}`;
@@ -907,7 +907,8 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
         destination: dest.title, about: dest.description, traveller_interests: interests || 'local culture and food',
         candidate_sights_found_nearby: nearby.map(p => p.title),
         task: `List ${wantSights} sights to visit in or within a short day trip of ${dest.title} (include the candidates that fit, and add other famous sights by exact Wikipedia title), and ${wantDishes} local dishes, sweets or drinks that ${dest.title} or its state is known for, by exact Wikipedia title.`,
-        format: { sights: [{ title: 'exact Wikipedia title', area: 'neighbourhood or nearby town', offbeat: 'true if less crowded', interests: ['nature|history|culture|food|temples|beaches|shopping|adventure|art|architecture|wildlife|spiritual|photography'], entry_fee_inr: 0 }], dishes: [{ title: 'exact Wikipedia title', where_to_try: 'area or market in the destination', veg: true, cost_per_person_inr: 150 }] },
+        base_city: dest.isRegion ? `This is a whole state or region. Pick ONE base city in it that suits a ${days}-day trip and the interests, and list only sights within about 60 km of that base city.` : undefined,
+        format: { base_city: 'exact Wikipedia title of the base city (only for a state or region)', sights: [{ title: 'exact Wikipedia title', area: 'neighbourhood or nearby town', offbeat: 'true if less crowded', interests: ['nature|history|culture|food|temples|beaches|shopping|adventure|art|architecture|wildlife|spiritual|photography'], entry_fee_inr: 0 }], dishes: [{ title: 'exact Wikipedia title', where_to_try: 'area or market in the destination', veg: true, cost_per_person_inr: 150 }] },
       }) },
     ]);
   } catch (err) {
@@ -928,7 +929,15 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   for (const pair of rescued) if (pair) found.set(pair[0].toLowerCase(), pair[1]);
   const byTitle = (title: unknown) => found.get(String(title || '').replace(/_/g, ' ').trim().toLowerCase())
     || [...found.values()].find(p => p.title.toLowerCase() === String(title || '').replace(/_/g, ' ').trim().toLowerCase());
-  const maxKm = dest.isRegion ? 700 : 90;
+  // For a state or region, plan around one base city so each day stays local.
+  let baseLabel: string | null = null;
+  if (dest.isRegion && ai?.base_city) {
+    const base = await resolveDestination(`${String(ai.base_city)} ${dest.title}`);
+    if (base && base.lat !== null && base.lng !== null && !base.isRegion && kmBetween(center, { lat: base.lat, lng: base.lng }) < 900) {
+      center.lat = base.lat; center.lng = base.lng; baseLabel = base.title;
+    }
+  }
+  const maxKm = dest.isRegion && !baseLabel ? 700 : 90;
   const destWords = dest.title.split(/[ ,]+/)[0].toLowerCase();
   const rows: any[] = [];
   const seen = new Set<string>();
@@ -956,5 +965,5 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   // Make sure at least one sight is marked less-crowded: pick the least-known verified one.
   const sights = rows.filter(r => r.kind === 'sight');
   if (sights.length && !sights.some(r => r.offbeat)) sights[sights.length - 1].offbeat = true;
-  return { dest, places: rows };
+  return { dest: { ...dest, base: baseLabel, lat: center.lat, lng: center.lng }, places: rows };
 }
