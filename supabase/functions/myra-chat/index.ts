@@ -541,21 +541,31 @@ Deno.serve(async (req) => {
       const count = dayCount(trip);
       const nights = Math.max(0, count - 1);
       const people = Math.max(1, Number(trip.travellers_count) || (trip.travellers_type === 'solo' ? 1 : trip.travellers_type === 'couple' ? 2 : trip.travellers_type === 'family' ? 4 : 3));
-      const family = trip.travellers_type === 'family';
-      const effectivePace = family ? 'relaxed' : (trip.pace || 'normal');
-      const rooms = family && people >= 4 && people <= 5 ? 2 : Math.max(1, Math.ceil(people / 2));
       // Destinations outside the curated catalogue: build the plan from sights
       // and dishes verified on Wikipedia (exact article, own photo, near the city).
       let groundedDest: any = null;
-      if (places.length < 12) {
+      const family = trip.travellers_type === 'family';
+      const effectivePace = family ? 'relaxed' : (trip.pace || 'normal');
+      const targetFoodPerDay = effectivePace === 'packed' ? 3 : 2;
+      const rooms = family && people >= 4 && people <= 5 ? 2 : Math.max(1, Math.ceil(people / 2));
+      const minSightCount = count * 2;
+      const minFoodCount = count * targetFoodPerDay;
+      const currentSights = places.filter((p: any) => p.kind === 'sight').length;
+      const currentFoods = places.filter((p: any) => p.kind === 'food').length;
+      if (currentSights < minSightCount || currentFoods < minFoodCount || places.length < 12) {
         const grounded = await groundedPlacesFor(trip.destination, trip.interests, count, groq);
         groundedDest = grounded.dest;
-        const verifiedSights = grounded.places.filter((p: any) => p.kind === 'sight').length;
-        const verifiedFood = grounded.places.filter((p: any) => p.kind === 'food').length;
-        if (!groundedDest || verifiedSights < 2 || !verifiedFood) {
-          return json({ ok: false, catalogue_missing: true, error: `I couldn’t find enough verified sights and local food for ${trip.destination} yet. Try the main city name (for example “Shillong” for Meghalaya) and I’ll plan it.` }, 422);
+        const unique = new Map<string, any>();
+        for (const place of [...places, ...grounded.places]) {
+          const key = `${place.kind}:${String(place.wiki_title || place.name).toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+          if (!unique.has(key)) unique.set(key, place);
         }
-        places = grounded.places;
+        places = [...unique.values()];
+        const verifiedSights = places.filter((p: any) => p.kind === 'sight').length;
+        const verifiedFood = places.filter((p: any) => p.kind === 'food').length;
+        if (!groundedDest || verifiedSights < minSightCount || verifiedFood < minFoodCount) {
+          return json({ ok: false, catalogue_missing: true, error: `I couldn’t find enough distinct, photo-matched places and local dishes for all ${count} days in ${trip.destination}. I won’t repeat or invent stops; try fewer days or another destination.` }, 422);
+        }
       }
       const allowanceStay = !catalogue.length;
       const suitable = catalogue.filter((hotel: any) => !family || hotel.tags?.includes('family-friendly'));
@@ -618,15 +628,17 @@ Deno.serve(async (req) => {
       if (!sightRows.length || !foodRows.length || !offbeat) return json({ ok: false, error: `The ${city} catalogue needs sights, food stops, and at least one less-crowded sight before Myra can make a grounded plan.` }, 422);
       const used = new Set<string>();
       const usedFood = new Set<string>();
-      const maxSights = family ? 2 : trip.pace === 'packed' ? 3 : 2;
-      const daySelections: Array<{ sights: any[]; food: any | null }> = [];
+      const maxSights = family || effectivePace === 'relaxed' ? 2 : effectivePace === 'packed' ? 5 : 3;
+      const daySelections: Array<{ sights: any[]; foods: any[] }> = [];
       for (let day = 0; day < count; day++) {
         const unused = [...sightRows].filter((place: any) => !used.has(place.id));
+        const futureMinimum = Math.max(0, count - day - 1) * 2;
+        const targetToday = Math.min(maxSights, Math.max(2, unused.length - futureMinimum));
         const nearby = unused.filter((place: any) => km(selectedStay, place) <= 15);
-        const candidates = [...(nearby.length >= Math.max(1, maxSights - (day === 0 && offbeat ? 1 : 0)) ? nearby : unused)];
+        const candidates = [...(nearby.length >= Math.max(1, targetToday - (day === 0 && offbeat ? 1 : 0)) ? nearby : unused)];
         const picked: any[] = [];
         if (day === 0 && offbeat) { picked.push(offbeat); used.add(offbeat.id); }
-        while (picked.length < maxSights) {
+        while (picked.length < targetToday) {
           const available = candidates.filter((place: any) => !used.has(place.id));
           if (!available.length) break;
           available.sort((a: any, b: any) => {
@@ -636,36 +648,40 @@ Deno.serve(async (req) => {
           const place = available[0];
           picked.push(place); used.add(place.id);
         }
-        const availableFood = foodRows.filter((place: any) => !usedFood.has(place.id));
-        const food = [...availableFood].sort((a: any, b: any) => {
+        const sortedFood = [...foodRows].sort((a: any, b: any) => {
           const foodRouteScore = (place: any) => (matchesInterest(place) ? 40 : 0) - picked.reduce((total: number, sight: any) => total + km(sight, place), 0) / Math.max(1, picked.length) * 2;
           return foodRouteScore(b) - foodRouteScore(a);
-        })[0] || null;
-        if (food) usedFood.add(food.id);
-        daySelections.push({ sights: picked, food });
+        });
+        const foods: any[] = [];
+        for (const place of sortedFood) {
+          if (foods.length >= targetFoodPerDay) break;
+          const id = String(place.id || place.wiki_title || place.name);
+          if (usedFood.has(id)) continue;
+          foods.push(place); usedFood.add(id);
+        }
+        daySelections.push({ sights: picked, foods });
       }
-      const rawExtras = daySelections.map(({ sights, food }) => [...sights.map((place: any) => Math.max(0, Number(place.typical_cost_inr) || 0) * people), ...(food ? [Math.max(0, Number(food.typical_cost_inr) || 0) * people] : [])]);
-      const rawExtrasTotal = rawExtras.flat().reduce((sum: number, value: number) => sum + value, 0);
-      const extrasBudget = Math.max(0, budget - minimum);
-      const extraFactor = rawExtrasTotal > extrasBudget && rawExtrasTotal > 0 ? extrasBudget / rawExtrasTotal : 1;
-      const moneyCost = (value: number) => Math.max(0, Math.floor(value * extraFactor));
-      const times = effectivePace === 'packed' ? ['8:30 AM', '11:00 AM', '1:00 PM', '4:00 PM'] : ['9:00 AM', '11:30 AM', '1:00 PM'];
-      const days = daySelections.map(({ sights, food }, i) => {
+      const moneyCost = (value: number) => Math.max(0, Math.round(value));
+      const times = effectivePace === 'packed' ? ['8:30 AM', '10:30 AM', '12:30 PM', '2:30 PM', '4:30 PM'] : ['9:00 AM', '11:30 AM', '2:00 PM'];
+      const foodTimes = targetFoodPerDay === 3 ? ['1:00 PM', '4:30 PM', '7:00 PM'] : ['1:00 PM', '7:00 PM'];
+      const foodMeals = targetFoodPerDay === 3 ? ['Lunch', 'Local snack', 'Dinner'] : ['Lunch', 'Dinner'];
+      const days = daySelections.map(({ sights, foods }, i) => {
         const stops = sights.map((place: any, j: number) => ({
           time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null,
           cost_inr: moneyCost(Math.max(0, Number(place.typical_cost_inr) || 0) * people), reason: place.offbeat ? `A quieter stop in ${place.area}, chosen for your ${trip.interests || 'local discovery'} interests${km(selectedStay, place) <= 15 ? ' and close to your stay' : '; allow time for the drive'}.` : `Visit ${place.name} in ${place.area} for your ${trip.interests || 'local discovery'} interests.`, offbeat: Boolean(place.offbeat),
         }));
-        const foodStop = food ? { time: '7:00 PM', meal: 'Dinner', name: food.name, kind: 'food', area: food.area, lat: food.lat == null ? null : Number(food.lat), lng: food.lng == null ? null : Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null, source_url: food.source_url || null, veg: typeof food.veg === 'boolean' ? food.veg : null,
-          cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: `Finish the day with ${food.name}, a local favourite to try around ${food.area}.` } : null;
+        const foodStops = foods.map((food: any, j: number) => ({ time: foodTimes[j] || '7:00 PM', meal: foodMeals[j] || 'Local food', name: food.name, kind: 'food', area: food.area, lat: food.lat == null ? null : Number(food.lat), lng: food.lng == null ? null : Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null, source_url: food.source_url || null, veg: typeof food.veg === 'boolean' ? food.veg : null,
+          cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: j === foods.length - 1 ? `Finish the day with ${food.name}, a local favourite to try around ${food.area}.` : `Try ${food.name}, a well-known local dish around ${food.area}.` }));
         const stayNight = i < nights ? Number(selectedStay.price_per_night_inr) * rooms : 0;
-        const extras = [...stops.map((stop: any) => stop.cost_inr), ...(foodStop ? [foodStop.cost_inr] : [])];
+        const extras = [...stops.map((stop: any) => stop.cost_inr), ...foodStops.map((stop: any) => stop.cost_inr)];
         const dailyCost = stayNight + dailyFloor + extras.reduce((sum: number, value: number) => sum + value, 0);
-        const activities = [...stops.map((stop: any) => stop.name), ...(foodStop ? [foodStop.name] : [])];
-        const reasons = [...stops.map((stop: any) => stop.reason), ...(foodStop ? [foodStop.reason] : [])];
-        const restNote = family ? 'Leave a relaxed rest break at the family-friendly stay for children and elders.' : (!stops.length ? 'The destination catalogue has no additional distinct sights for this day; keep it open for rest or choose a new location.' : (!foodStop ? 'All distinct food suggestions in the destination catalogue have been used; choose a local meal near the listed stop.' : ''));
-        return { day: i + 1, date: new Date(Date.parse(`${trip.start_date}T00:00:00Z`) + i * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), stay: selectedStay.name, stops, food_stop: foodStop, rest_note: restNote, activities, reasons, est_cost_inr: dailyCost };
+        const activities = [...stops.map((stop: any) => stop.name), ...foodStops.map((stop: any) => stop.name)];
+        const reasons = [...stops.map((stop: any) => stop.reason), ...foodStops.map((stop: any) => stop.reason)];
+        const restNote = family ? 'Leave a relaxed rest break at the family-friendly stay for children and elders.' : (!stops.length ? 'The destination catalogue has no additional distinct sights for this day; keep it open for rest or choose a new location.' : '');
+        return { day: i + 1, date: new Date(Date.parse(`${trip.start_date}T00:00:00Z`) + i * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), stay: selectedStay.name, stops, food_stops: foodStops, rest_note: restNote, activities, reasons, est_cost_inr: dailyCost };
       });
       const total = days.reduce((sum: number, day: any) => sum + day.est_cost_inr, 0);
+      if (total > budget) return json({ ok: true, budget_too_low: true, minimum_budget_inr: total, reply: `Your budget looks too low for this trip. The current catalogue-based estimate is ₹${total.toLocaleString('en-IN')}. Increase the budget or choose fewer days.` });
       const hotel = allowanceStay ? null : { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
       const hotelOptions = allowanceStay ? [] : options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
       const placeLabel = groundedDest ? (groundedDest.base ? `${groundedDest.title} (based in ${groundedDest.base})` : groundedDest.title) : city;
