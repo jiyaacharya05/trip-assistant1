@@ -842,6 +842,13 @@ const SIGHT_WORDS = /\b(temple|mandir|fort|palace|mahal|museum|lake|ghat|mosque|
 const NOT_A_SIGHT = /\b(constituency|railway station|school|college|university|institute|hospital|company|airport|bus station|metro station|ward|suburb|neighbourhood|neighborhood|tehsil|hotel|stadium|cinema|newspaper|bank|ministry|office|court|club|software|film|album|politician|census|lok sabha|assembly|organisation|organization|party)\b/i;
 const FOOD_WORDS = /\b(dish|food|cuisine|sweet|snack|bread|curry|dessert|beverage|drink|rice|street food|pastry|chutney|confection|delicacy|flatbread|dumpling|fritter|pickle|tea|coffee|soup|stew|kebab|kabab|biryani|meal|condiment|chaat|pudding|yogurt|yoghurt|cake|noodle|pancake|porridge|sauce|lentil|fish|meat|savoury|savory|cookie|wine|liquor|spirit|thali|platter)\b/i;
 
+function closeTitle(asked: string, got: string) {
+  const norm = (x: string) => x.toLowerCase().replace(/\([^)]*\)/g, ' ').normalize('NFKD').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 2);
+  const a = new Set(norm(asked)), b = new Set(norm(got));
+  if (!a.size || !b.size) return false;
+  const shared = [...b].filter(w => a.has(w)).length;
+  return shared / b.size >= 0.6 && shared >= 1;
+}
 function kmBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const r = (n: number) => n * Math.PI / 180, R = 6371;
   const dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
@@ -891,7 +898,7 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   const center = { lat: dest.lat, lng: dest.lng as number };
   const nearby = dest.isRegion ? [] : await nearbySights(center.lat, center.lng);
   const wantSights = Math.min(16, Math.max(8, days * 3 + 2));
-  const wantDishes = Math.min(8, Math.max(5, days + 2));
+  const wantDishes = Math.min(10, Math.max(8, days + 4));
   let ai: any = {};
   try {
     ai = await groqPlaces([
@@ -908,7 +915,17 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   }
   const aiSights: any[] = Array.isArray(ai?.sights) ? ai.sights : [];
   const aiDishes: any[] = Array.isArray(ai?.dishes) ? ai.dishes : [];
-  const found = await lookupTitles([...aiSights.map(s => s?.title), ...aiDishes.map(d => d?.title)]);
+  const askedTitles = [...aiSights.map(s => s?.title), ...aiDishes.map(d => d?.title)].map(t => String(t || '').replace(/_/g, ' ').trim()).filter(Boolean);
+  const found = await lookupTitles(askedTitles);
+  // Titles the AI got slightly wrong: search Wikipedia and accept the top hit
+  // only when its name closely matches what was asked for.
+  const missing = askedTitles.filter(t => !found.has(t.toLowerCase())).slice(0, 14);
+  const rescued = await Promise.all(missing.map(async t => {
+    const hits = await wikiQuery({ action: 'query', generator: 'search', gsrsearch: t, gsrlimit: 1, ...PAGE_PROPS });
+    const hit = hits.map(toPage)[0];
+    return hit && closeTitle(t, hit.title) ? [t, hit] as const : null;
+  }));
+  for (const pair of rescued) if (pair) found.set(pair[0].toLowerCase(), pair[1]);
   const byTitle = (title: unknown) => found.get(String(title || '').replace(/_/g, ' ').trim().toLowerCase())
     || [...found.values()].find(p => p.title.toLowerCase() === String(title || '').replace(/_/g, ' ').trim().toLowerCase());
   const maxKm = dest.isRegion ? 700 : 90;
