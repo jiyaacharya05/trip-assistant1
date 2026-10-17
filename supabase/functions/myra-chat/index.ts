@@ -674,13 +674,23 @@ Deno.serve(async (req) => {
           cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: j === foods.length - 1 ? `Finish the day with ${food.name}, a local favourite to try around ${food.area}.` : `Try ${food.name}, a well-known local dish around ${food.area}.` }));
         const stayNight = i < nights ? Number(selectedStay.price_per_night_inr) * rooms : 0;
         const extras = [...stops.map((stop: any) => stop.cost_inr), ...foodStops.map((stop: any) => stop.cost_inr)];
-        const dailyCost = stayNight + dailyFloor + extras.reduce((sum: number, value: number) => sum + value, 0);
+        const sightseeingCost = stops.reduce((sum: number, stop: any) => sum + stop.cost_inr, 0);
+        const foodCost = foodStops.reduce((sum: number, stop: any) => sum + stop.cost_inr, 0);
+        const dailyCost = stayNight + dailyFloor + sightseeingCost + foodCost;
         const activities = [...stops.map((stop: any) => stop.name), ...foodStops.map((stop: any) => stop.name)];
         const reasons = [...stops.map((stop: any) => stop.reason), ...foodStops.map((stop: any) => stop.reason)];
         const restNote = family ? 'Leave a relaxed rest break at the family-friendly stay for children and elders.' : (!stops.length ? 'The destination catalogue has no additional distinct sights for this day; keep it open for rest or choose a new location.' : '');
-        return { day: i + 1, date: new Date(Date.parse(`${trip.start_date}T00:00:00Z`) + i * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), stay: selectedStay.name, stops, food_stops: foodStops, rest_note: restNote, activities, reasons, est_cost_inr: dailyCost };
+        return { day: i + 1, date: new Date(Date.parse(`${trip.start_date}T00:00:00Z`) + i * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), stay: selectedStay.name, stops, food_stops: foodStops, stay_cost_inr: stayNight, sightseeing_cost_inr: sightseeingCost, food_cost_inr: foodCost, daily_allowance_inr: dailyFloor, rest_note: restNote, activities, reasons, est_cost_inr: dailyCost };
       });
-      const total = days.reduce((sum: number, day: any) => sum + day.est_cost_inr, 0);
+      const costBreakdown = {
+        stay: days.reduce((sum: number, day: any) => sum + day.stay_cost_inr, 0),
+        sightseeing: days.reduce((sum: number, day: any) => sum + day.sightseeing_cost_inr, 0),
+        food: days.reduce((sum: number, day: any) => sum + day.food_cost_inr, 0),
+        daily_allowance: days.reduce((sum: number, day: any) => sum + day.daily_allowance_inr, 0),
+      };
+      const total = costBreakdown.stay + costBreakdown.sightseeing + costBreakdown.food + costBreakdown.daily_allowance;
+      costBreakdown.total = total;
+      costBreakdown.budget_remaining = Math.max(0, budget - total);
       if (total > budget) return json({ ok: true, budget_too_low: true, minimum_budget_inr: total, reply: `Your budget looks too low for this trip. The current catalogue-based estimate is ₹${total.toLocaleString('en-IN')}. Increase the budget or choose fewer days.` });
       const hotel = allowanceStay ? null : { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
       const hotelOptions = allowanceStay ? [] : options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
@@ -692,7 +702,7 @@ Deno.serve(async (req) => {
       const catalogueNote = allowanceStay
         ? `Sorry, we don’t have hotel listings for ${placeLabel} in this site yet. I haven’t invented a stay; accommodation is not included in the estimate. You can check Hotels for any listings added later.`
         : '';
-      return json({ ok: true, catalogue_note: catalogueNote, plan: { days, total_cost_inr: total, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_allowance_inr: null, stay_choice_open: allowanceStay, destination_photo: groundedDest?.photo || null, destination_title: groundedDest?.title || null }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null })) });
+      return json({ ok: true, catalogue_note: catalogueNote, plan: { days, total_cost_inr: total, cost_breakdown_inr: costBreakdown, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_allowance_inr: null, stay_choice_open: allowanceStay, destination_photo: groundedDest?.photo || null, destination_title: groundedDest?.title || null }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null })) });
     }
 
     if (action === 'save_plan') {
