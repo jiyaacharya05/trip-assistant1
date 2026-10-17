@@ -350,6 +350,61 @@ async function persistPartial(userId: string | undefined, id: string | undefined
   return data.id as string;
 }
 
+
+async function googleCostEstimates(city: string, items: Array<{ id: string; name: string; kind: string; area: string }>) {
+  const key = Deno.env.get('GEMINI_API_KEY');
+  const estimates = new Map<string, { cost_inr: number; source_url: string }>();
+  if (!key || !items.length) return estimates;
+  const input = [
+    'Use Google Search to find current public prices in INR for these exact India travel places and local dishes.',
+    'For sights, estimate one adult entry/admission ticket when applicable. For food, estimate one typical serving per person from a published menu or reliable source.',
+    'Return only JSON: {"items":[{"id":"...","cost_inr_per_person":123,"source_url":"https://..."}]}.',
+    'Only include an item when Google Search found a clear price and the returned source_url is among the sources you actually used. Do not infer, invent, or estimate from memory. Omit unknown prices.',
+    'Use 0 only when a cited source clearly says the item has no entry/serving charge. Do not include hotel, airfare, or transport prices.',
+    'Destination: ' + city,
+    'Items: ' + JSON.stringify(items),
+  ].join('\n');
+  try {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ model: 'gemini-3.8-flash', input, tools: [{ type: 'google_search' }] }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!response.ok) {
+      console.warn('Google grounded cost lookup failed:', response.status);
+      return estimates;
+    }
+    const payload = await response.json();
+    const blocks = (Array.isArray(payload.steps) ? payload.steps : [])
+      .filter((step: any) => step.type === 'model_output')
+      .flatMap((step: any) => Array.isArray(step.content) ? step.content : [])
+      .filter((block: any) => block.type === 'text');
+    const citedUrls = new Set<string>();
+    const text = blocks.map((block: any) => {
+      for (const annotation of Array.isArray(block.annotations) ? block.annotations : []) {
+        if (annotation.type === 'url_citation' && /^https:\/\//i.test(String(annotation.url || ''))) citedUrls.add(String(annotation.url));
+      }
+      return String(block.text || '');
+    }).join('\n');
+    const jsonText = text.match(/\{[\s\S]*\}/)?.[0];
+    if (!jsonText || !citedUrls.size) return estimates;
+    const parsed = JSON.parse(jsonText);
+    const allowedIds = new Set(items.map(item => item.id));
+    for (const item of Array.isArray(parsed.items) ? parsed.items : []) {
+      const id = String(item.id || '');
+      const cost = Number(item.cost_inr_per_person);
+      const sourceUrl = String(item.source_url || '');
+      if (allowedIds.has(id) && Number.isFinite(cost) && cost >= 0 && cost <= 100000 && citedUrls.has(sourceUrl)) {
+        estimates.set(id, { cost_inr: Math.round(cost), source_url: sourceUrl });
+      }
+    }
+  } catch (error) {
+    console.warn('Google grounded cost lookup unavailable; keeping site catalogue estimates:', error);
+  }
+  return estimates;
+}
+
 Deno.serve(async (req) => {
   // Allow whatever headers the browser asks for, so newer supabase-js versions never fail the CORS check.
   if (req.method === 'OPTIONS') return new Response('ok', { headers: { ...cors, 'Access-Control-Allow-Headers': req.headers.get('Access-Control-Request-Headers') || cors['Access-Control-Allow-Headers'], 'Access-Control-Max-Age': '86400' } });
@@ -538,6 +593,13 @@ Deno.serve(async (req) => {
       }
       const catalogue = Array.isArray(hotelRows) ? hotelRows : [];
       let places: any[] = Array.isArray(placeRows) ? placeRows : [];
+      if (!catalogue.length && !places.length) {
+        return json({
+          ok: true,
+          destination_not_found: true,
+          reply: `No search results for ${trip.destination} yet. We don’t have this destination in Trip Assistant yet. Please choose a destination that appears in the Hotels, Villas, Holiday Packages, or Tours sections.`,
+        });
+      }
       const count = dayCount(trip);
       const nights = Math.max(0, count - 1);
       const people = Math.max(1, Number(trip.travellers_count) || (trip.travellers_type === 'solo' ? 1 : trip.travellers_type === 'couple' ? 2 : trip.travellers_type === 'family' ? 4 : 3));
@@ -574,7 +636,7 @@ Deno.serve(async (req) => {
       const options = allowanceStay
         ? [{ id: null, city, name: OPEN_STAY, price_per_night_inr: 0, area: trip.destination, tags: [], lat: groundedDest?.lat ?? null, lng: groundedDest?.lng ?? null, address: trip.destination, photos: [] }]
         : (suitable.length ? suitable : catalogue);
-      const dailyFloor = 600 * people;
+      let dailyFloor = 600 * people;
       const budget = Number(trip.budget_inr || 0);
       const cheapestStay = options[0];
       const cheapestHotelTotal = allowanceStay ? 0 : Number(cheapestStay.price_per_night_inr || 0) * rooms * nights;
@@ -661,6 +723,17 @@ Deno.serve(async (req) => {
         }
         daySelections.push({ sights: picked, foods });
       }
+      const costItems = daySelections.flatMap(({ sights, foods }) => [...sights, ...foods]).map((item: any) => ({
+        id: String(item.id || item.wiki_title || item.name),
+        name: String(item.name || '').slice(0, 140),
+        kind: String(item.kind || ''),
+        area: String(item.area || city).slice(0, 120),
+      }));
+      const googleCosts = await googleCostEstimates(city, costItems);
+      const perPersonCost = (item: any) => {
+        const id = String(item.id || item.wiki_title || item.name);
+        return googleCosts.get(id)?.cost_inr ?? Math.max(0, Number(item.typical_cost_inr) || 0);
+      };
       const moneyCost = (value: number) => Math.max(0, Math.round(value));
       const times = effectivePace === 'packed' ? ['8:30 AM', '10:30 AM', '12:30 PM', '2:30 PM', '4:30 PM'] : ['9:00 AM', '11:30 AM', '2:00 PM'];
       const foodTimes = targetFoodPerDay === 3 ? ['1:00 PM', '4:30 PM', '7:00 PM'] : ['1:00 PM', '7:00 PM'];
@@ -668,10 +741,10 @@ Deno.serve(async (req) => {
       const days = daySelections.map(({ sights, foods }, i) => {
         const stops = sights.map((place: any, j: number) => ({
           time: times[j] || '3:00 PM', name: place.name, kind: 'sight', area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null,
-          cost_inr: moneyCost(Math.max(0, Number(place.typical_cost_inr) || 0) * people), reason: place.offbeat ? `A quieter stop in ${place.area}, chosen for your ${trip.interests || 'local discovery'} interests${km(selectedStay, place) <= 15 ? ' and close to your stay' : '; allow time for the drive'}.` : `Visit ${place.name} in ${place.area} for your ${trip.interests || 'local discovery'} interests.`, offbeat: Boolean(place.offbeat),
+          cost_inr: moneyCost(perPersonCost(place) * people), cost_source: googleCosts.has(String(place.id || place.wiki_title || place.name)) ? 'Google Search' : 'Site catalogue', cost_source_url: googleCosts.get(String(place.id || place.wiki_title || place.name))?.source_url || null, reason: place.offbeat ? `A quieter stop in ${place.area}, chosen for your ${trip.interests || 'local discovery'} interests${km(selectedStay, place) <= 15 ? ' and close to your stay' : '; allow time for the drive'}.` : `Visit ${place.name} in ${place.area} for your ${trip.interests || 'local discovery'} interests.`, offbeat: Boolean(place.offbeat),
         }));
         const foodStops = foods.map((food: any, j: number) => ({ time: foodTimes[j] || '7:00 PM', meal: foodMeals[j] || 'Local food', name: food.name, kind: 'food', area: food.area, lat: food.lat == null ? null : Number(food.lat), lng: food.lng == null ? null : Number(food.lng), wiki_title: food.wiki_title, photo_url: food.photo_url || null, photo_credit: food.photo_credit || null, source_url: food.source_url || null, veg: typeof food.veg === 'boolean' ? food.veg : null,
-          cost_inr: moneyCost(Math.max(0, Number(food.typical_cost_inr) || 0) * people), reason: j === foods.length - 1 ? `Finish the day with ${food.name}, a local favourite to try around ${food.area}.` : `Try ${food.name}, a well-known local dish around ${food.area}.` }));
+          cost_inr: moneyCost(perPersonCost(food) * people), cost_source: googleCosts.has(String(food.id || food.wiki_title || food.name)) ? 'Google Search' : 'Site catalogue', cost_source_url: googleCosts.get(String(food.id || food.wiki_title || food.name))?.source_url || null, reason: j === foods.length - 1 ? `Finish the day with ${food.name}, a local favourite to try around ${food.area}.` : `Try ${food.name}, a well-known local dish around ${food.area}.` }));
         const stayNight = i < nights ? Number(selectedStay.price_per_night_inr) * rooms : 0;
         const extras = [...stops.map((stop: any) => stop.cost_inr), ...foodStops.map((stop: any) => stop.cost_inr)];
         const sightseeingCost = stops.reduce((sum: number, stop: any) => sum + stop.cost_inr, 0);
@@ -696,11 +769,11 @@ Deno.serve(async (req) => {
       const stayText = allowanceStay
         ? 'no catalogue hotel stay; accommodation is excluded from the total'
         : `${rooms} room${rooms === 1 ? '' : 's'} for ${nights} night${nights === 1 ? '' : 's'}`;
-      const summary = `${count}-day ${effectivePace} ${family ? 'family ' : ''}plan for ${placeLabel}, ${trip.start_date} to ${trip.end_date}. It includes ${stayText}, ${groundedDest ? 'sights and local food verified on Wikipedia' : 'destination-catalogue sights, local food'}, and a ₹600-per-person daily allowance. Total estimate ₹${total.toLocaleString('en-IN')} stays within your ₹${budget.toLocaleString('en-IN')} budget; airfare is excluded.`;
+      const summary = `${count}-day ${effectivePace} ${family ? 'family ' : ''}plan for ${placeLabel}, ${trip.start_date} to ${trip.end_date}. It includes ${stayText}, ${groundedDest ? 'sights and local food verified on Wikipedia' : 'destination-catalogue sights, local food'}, and a ${googleCosts.size ? 'Google Search-grounded' : 'site catalogue'} estimate for sights and food, plus a ₹${Math.round(dailyFloor / people).toLocaleString('en-IN')}-per-person daily allowance. Total estimate ₹${total.toLocaleString('en-IN')} stays within your ₹${budget.toLocaleString('en-IN')} budget; airfare is excluded.`;
       const catalogueNote = allowanceStay
         ? `Sorry, we don’t have hotel listings for ${placeLabel} in this site yet. I haven’t invented a stay; accommodation is not included in the estimate. You can check Hotels for any listings added later.`
         : '';
-      return json({ ok: true, catalogue_note: catalogueNote, plan: { days, total_cost_inr: total, cost_breakdown_inr: costBreakdown, summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_allowance_inr: null, stay_choice_open: allowanceStay, destination_photo: groundedDest?.photo || null, destination_title: groundedDest?.title || null }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null })) });
+      return json({ ok: true, catalogue_note: catalogueNote, plan: { days, total_cost_inr: total, cost_breakdown_inr: costBreakdown, cost_source: googleCosts.size ? 'Google Search + site catalogue' : 'Site catalogue estimates', summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_allowance_inr: null, stay_choice_open: allowanceStay, destination_photo: groundedDest?.photo || null, destination_title: groundedDest?.title || null }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null })) });
     }
 
     if (action === 'save_plan') {
