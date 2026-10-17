@@ -851,6 +851,36 @@ function kmBetween(a: { lat: number; lng: number }, b: { lat: number; lng: numbe
 
 type Groq = (messages: unknown[], temperature?: number) => Promise<any>;
 
+// Dedicated Groq call for place lists: low reasoning effort keeps the JSON
+// short and valid; one retry covers an occasional malformed reply.
+async function groqPlaces(messages: unknown[]) {
+  const key = Deno.env.get('GROQ_API_KEY');
+  if (!key) throw new Error('GROQ_API_KEY is not set');
+  let lastError = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 40000);
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'openai/gpt-oss-20b', messages, temperature: 0.2, reasoning_effort: 'low', max_completion_tokens: 4000, response_format: { type: 'json_object' } }),
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      if (!res.ok) { lastError = `Groq ${res.status}: ${text.slice(0, 300)}`; console.warn('Groq place list failed:', lastError); continue; }
+      const payload = JSON.parse(text);
+      return JSON.parse(payload.choices?.[0]?.message?.content || '{}');
+    } catch (err) {
+      lastError = String(err);
+      console.warn('Groq place list error:', lastError);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(lastError || 'Groq place list unavailable');
+}
+
 /**
  * Build a verified list of sights and dishes for any destination.
  * Returns rows in the same shape as catalogue_places so the normal planner can use them.
@@ -860,11 +890,11 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   if (!dest || dest.lat === null || dest.lng === null) return { dest: null, places: [] as any[] };
   const center = { lat: dest.lat, lng: dest.lng as number };
   const nearby = dest.isRegion ? [] : await nearbySights(center.lat, center.lng);
-  const wantSights = Math.min(24, Math.max(10, days * 3 + 4));
-  const wantDishes = Math.min(12, Math.max(6, days + 3));
+  const wantSights = Math.min(16, Math.max(8, days * 3 + 2));
+  const wantDishes = Math.min(8, Math.max(5, days + 2));
   let ai: any = {};
   try {
-    ai = await groq([
+    ai = await groqPlaces([
       { role: 'system', content: 'You are a careful travel researcher. Return JSON only. Every "title" must be the exact title of an existing English Wikipedia article about that exact place or dish. Never invent titles, hotels, prices or places. Prefer well-known sights plus genuinely less-crowded local ones.' },
       { role: 'user', content: JSON.stringify({
         destination: dest.title, about: dest.description, traveller_interests: interests || 'local culture and food',
@@ -872,7 +902,7 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
         task: `List ${wantSights} sights to visit in or within a short day trip of ${dest.title} (include the candidates that fit, and add other famous sights by exact Wikipedia title), and ${wantDishes} local dishes, sweets or drinks that ${dest.title} or its state is known for, by exact Wikipedia title.`,
         format: { sights: [{ title: 'exact Wikipedia title', area: 'neighbourhood or nearby town', offbeat: 'true if less crowded', interests: ['nature|history|culture|food|temples|beaches|shopping|adventure|art|architecture|wildlife|spiritual|photography'], entry_fee_inr: 0 }], dishes: [{ title: 'exact Wikipedia title', where_to_try: 'area or market in the destination', veg: true, cost_per_person_inr: 150 }] },
       }) },
-    ], 0.2);
+    ]);
   } catch (err) {
     console.warn('Groq could not suggest grounded places:', err);
   }
