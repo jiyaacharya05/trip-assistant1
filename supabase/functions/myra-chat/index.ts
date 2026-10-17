@@ -689,8 +689,6 @@ Deno.serve(async (req) => {
         daily_allowance: days.reduce((sum: number, day: any) => sum + day.daily_allowance_inr, 0),
       };
       const total = costBreakdown.stay + costBreakdown.sightseeing + costBreakdown.food + costBreakdown.daily_allowance;
-      costBreakdown.total = total;
-      costBreakdown.budget_remaining = Math.max(0, budget - total);
       if (total > budget) return json({ ok: true, budget_too_low: true, minimum_budget_inr: total, reply: `Your budget looks too low for this trip. The current catalogue-based estimate is ₹${total.toLocaleString('en-IN')}. Increase the budget or choose fewer days.` });
       const hotel = allowanceStay ? null : { id: selectedStay.id, city: selectedStay.city, name: selectedStay.name, area: selectedStay.area, address: selectedStay.address, price_per_night_inr: Number(selectedStay.price_per_night_inr), tags: selectedStay.tags || [], lat: Number(selectedStay.lat), lng: Number(selectedStay.lng), photos: Array.isArray(selectedStay.photos) ? selectedStay.photos : [] };
       const hotelOptions = allowanceStay ? [] : options.slice(0, 3).map((row: any) => ({ id: row.id, name: row.name, city: row.city, area: row.area, address: row.address, price_per_night_inr: Number(row.price_per_night_inr), tags: row.tags || [], lat: Number(row.lat), lng: Number(row.lng), photos: Array.isArray(row.photos) ? row.photos : [] }));
