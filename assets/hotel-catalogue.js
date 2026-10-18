@@ -947,5 +947,252 @@ export const HOTELS = [
       "assets/hotel-exclusive-020.jpg",
       "assets/hotel-exclusive-039.jpg"
     ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Circular Quay Harbour Hotel",
+    "price_per_night_inr": 7900,
+    "area": "Circular Quay",
+    "tags": [
+      "popular",
+      "family-friendly"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000001",
+    "lat": -33.861,
+    "lng": 151.2108,
+    "address": "Circular Quay, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-001.jpg",
+      "assets/hotel-exclusive-002.jpg",
+      "assets/hotel-exclusive-003.jpg",
+      "assets/hotel-exclusive-004.jpg",
+      "assets/hotel-exclusive-005.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "The Rocks Heritage Stay",
+    "price_per_night_inr": 8180,
+    "area": "The Rocks",
+    "tags": [
+      "offbeat",
+      "popular"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000002",
+    "lat": -33.8587,
+    "lng": 151.209,
+    "address": "The Rocks, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-006.jpg",
+      "assets/hotel-exclusive-007.jpg",
+      "assets/hotel-exclusive-008.jpg",
+      "assets/hotel-exclusive-009.jpg",
+      "assets/hotel-exclusive-010.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Darling Harbour Suites",
+    "price_per_night_inr": 8460,
+    "area": "Darling Harbour",
+    "tags": [
+      "popular"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000003",
+    "lat": -33.8731,
+    "lng": 151.198,
+    "address": "Darling Harbour, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-011.jpg",
+      "assets/hotel-exclusive-012.jpg",
+      "assets/hotel-exclusive-013.jpg",
+      "assets/hotel-exclusive-014.jpg",
+      "assets/hotel-exclusive-015.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Surry Hills House",
+    "price_per_night_inr": 8455,
+    "area": "Surry Hills",
+    "tags": [
+      "offbeat",
+      "budget"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000004",
+    "lat": -33.884,
+    "lng": 151.211,
+    "address": "Surry Hills, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-016.jpg",
+      "assets/hotel-exclusive-017.jpg",
+      "assets/hotel-exclusive-018.jpg",
+      "assets/hotel-exclusive-019.jpg",
+      "assets/hotel-exclusive-020.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Barangaroo Grand",
+    "price_per_night_inr": 8735,
+    "area": "Barangaroo",
+    "tags": [
+      "popular"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000005",
+    "lat": -33.8617,
+    "lng": 151.201,
+    "address": "Barangaroo, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-021.jpg",
+      "assets/hotel-exclusive-022.jpg",
+      "assets/hotel-exclusive-023.jpg",
+      "assets/hotel-exclusive-024.jpg",
+      "assets/hotel-exclusive-025.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Bondi Beach Retreat",
+    "price_per_night_inr": 9015,
+    "area": "Bondi",
+    "tags": [
+      "popular",
+      "family-friendly"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000006",
+    "lat": -33.8915,
+    "lng": 151.276,
+    "address": "Bondi, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-026.jpg",
+      "assets/hotel-exclusive-027.jpg",
+      "assets/hotel-exclusive-028.jpg",
+      "assets/hotel-exclusive-029.jpg",
+      "assets/hotel-exclusive-030.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Parramatta Park Hotel",
+    "price_per_night_inr": 9010,
+    "area": "Parramatta",
+    "tags": [
+      "budget"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000007",
+    "lat": -33.815,
+    "lng": 151.001,
+    "address": "Parramatta, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-031.jpg",
+      "assets/hotel-exclusive-032.jpg",
+      "assets/hotel-exclusive-033.jpg",
+      "assets/hotel-exclusive-034.jpg",
+      "assets/hotel-exclusive-035.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Newtown Urban Inn",
+    "price_per_night_inr": 9290,
+    "area": "Newtown",
+    "tags": [
+      "offbeat",
+      "budget"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000008",
+    "lat": -33.8974,
+    "lng": 151.179,
+    "address": "Newtown, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-036.jpg",
+      "assets/hotel-exclusive-037.jpg",
+      "assets/hotel-exclusive-038.jpg",
+      "assets/hotel-exclusive-039.jpg",
+      "assets/hotel-exclusive-040.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Chatswood Court",
+    "price_per_night_inr": 9570,
+    "area": "Chatswood",
+    "tags": [
+      "family-friendly"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000009",
+    "lat": -33.7969,
+    "lng": 151.183,
+    "address": "Chatswood, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-041.jpg",
+      "assets/hotel-exclusive-042.jpg",
+      "assets/hotel-exclusive-043.jpg",
+      "assets/hotel-exclusive-044.jpg",
+      "assets/hotel-exclusive-045.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Pyrmont Waterfront Hotel",
+    "price_per_night_inr": 9565,
+    "area": "Pyrmont",
+    "tags": [
+      "popular"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000010",
+    "lat": -33.8693,
+    "lng": 151.194,
+    "address": "Pyrmont, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-046.jpg",
+      "assets/hotel-exclusive-047.jpg",
+      "assets/hotel-exclusive-048.jpg",
+      "assets/hotel-exclusive-049.jpg",
+      "assets/hotel-exclusive-050.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Manly Ocean House",
+    "price_per_night_inr": 9845,
+    "area": "Manly",
+    "tags": [
+      "offbeat",
+      "family-friendly"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000011",
+    "lat": -33.7969,
+    "lng": 151.285,
+    "address": "Manly, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-051.jpg",
+      "assets/hotel-exclusive-052.jpg",
+      "assets/hotel-exclusive-053.jpg",
+      "assets/hotel-exclusive-054.jpg",
+      "assets/hotel-exclusive-055.jpg"
+    ]
+  },
+  {
+    "city": "Sydney",
+    "name": "Mascot Airport Suites",
+    "price_per_night_inr": 10125,
+    "area": "Mascot",
+    "tags": [
+      "budget",
+      "popular"
+    ],
+    "id": "e1000000-0000-4000-8000-000000000012",
+    "lat": -33.9331,
+    "lng": 151.181,
+    "address": "Mascot, Sydney NSW",
+    "photos": [
+      "assets/hotel-exclusive-056.jpg",
+      "assets/hotel-exclusive-057.jpg",
+      "assets/hotel-exclusive-058.jpg",
+      "assets/hotel-exclusive-059.jpg",
+      "assets/hotel-exclusive-060.jpg"
+    ]
   }
 ];
