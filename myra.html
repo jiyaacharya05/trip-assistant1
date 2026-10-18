@@ -441,9 +441,9 @@ function applyDestinationCurrency(destination){const saved=readSavedCurrency(),l
     planGenerating=true;
     const typing=add('plan-progress','<span class="plan-progress-mark" aria-hidden="true">✦</span><div role="status" aria-live="polite"><strong>Putting your trip together<span class="plan-progress-dots" aria-hidden="true"></span></strong><p>Using your dates, budget and travel style to shape each day.</p></div>');
     try{const data=await parent.tripBackend.invoke('plan',{trip:tidyTrip(trip), current_plan:plan, change_request:changeRequest});typing.remove();planGenerating=false;
-      if(data.fallback){add('answer',`<p>${esc(data.reply)}</p>`);chips([{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'},{label:'Try again',value:'__retry_plan__'}]);return}
+      if(data.fallback){add('answer',`<p>${esc(localizeInrText(data.reply))}</p>`);chips([{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'},{label:'Try again',value:'__retry_plan__'}]);return}
       if(data.destination_not_found){add('answer',`<p>${esc(data.reply||`No search results for ${trip.destination} yet. We don’t have this destination in Trip Assistant yet.`)}</p>`);chips([{label:'Hotels',value:'Hotels'},{label:'Holiday Packages',value:'Holiday Packages'},{label:'Tours & Attractions',value:'Tours & Attractions'}]);return}
-      if(data.budget_too_low){add('answer',`<p>${esc(data.reply)}</p>`);return}
+      if(data.budget_too_low){add('answer',`<p>${esc(localizeInrText(data.reply))}</p>`);return}
       const checked=normalizePlanCosts({...data.plan,hotels:data.hotels},trip);if(checked.error){add('answer',`<p>${esc(checked.error)}</p>`);return}plan={...checked.plan,hotels:data.hotels||[],catalogue_note:data.catalogue_note||data.catalogue_notice||''};planDirty=true;renderPlan(plan);
     }catch(e){typing.remove();planGenerating=false;add('answer',`<p>I couldn’t generate your itinerary: ${esc(e?.message||'The planner service is unavailable right now.')}</p>`);chips([{label:'Try again',value:'__retry_plan__'},{label:'Cheapest flights',value:'cheapest flights'},{label:'Hotels near me',value:'hotels near me'}])}
   }
