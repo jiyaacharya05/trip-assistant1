@@ -10,9 +10,12 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 });
 const validTravellers = new Set(['solo', 'couple', 'family', 'friends']);
 const validPaces = new Set(['relaxed', 'normal', 'packed']);
+const nonDestinationWords = new Set(['to','from','and','or','in','at','on','for','around','date','dates','travel','trip','holiday','vacation','itinerary','normal','relaxed','packed','pace','solo','couple','family','friends','friend','group','nature','food','beach','beaches','temple','temples','history','culture','shopping','adventure','art','architecture','wildlife','nightlife','wellness','photography','heritage','hiking','trekking','coffee','local','interests','interest','budget','relax','moderate','fast']);
 const isUsableDestination = (value: unknown) => {
   const text = String(value || '').trim();
-  return Boolean(text && /[a-z]/i.test(text) && !/^(?:to|from|and|or|in|at|on|for|around|dates?|travel dates|trip|holiday|vacation|itinerary)$/i.test(text));
+  const normalized = text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  return Boolean(text && /[a-z]/i.test(text) && !nonDestinationWords.has(normalized) && !(words.length && words.every((word) => nonDestinationWords.has(word))));
 };
 class AiError extends Error { constructor(public code: string, message: string) { super(message); } }
 const serviceUrl = Deno.env.get('SUPABASE_URL')!;
@@ -135,7 +138,7 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
     .replace(new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthPattern})\\s*(?:20\\d{2})?\\b`, 'gi'), ' ');
   const destination = destinationText.match(/\b(?:trip|holiday|vacation)\s+(?:to|in|of)\s+([a-z][a-z\s'-]{0,35}?)(?=\s*(?:,|\bon\b|\bfrom\b|\bbudget\b|₹|\brs\b|\binr\b|\bsolo\b|\bcouple\b|\bfor\s+\d{1,2}\s*(?:adults?|grown[ -]?ups?|kids?|children|elders?|grandparents?|friends?)\b|\b(?:grandmother|grandfather|grandma|grandpa|elderly parent)\b|\bfamily\b|\bfriends?\b|\bi\s+(?:like|love|enjoy)\b|\binterests?\b|\bpace\b|$))/i)
     || destinationText.match(/\b(?:in|to|at)\s+([a-z][a-z\s'-]{0,35}?)(?=\s*(?:,|\bon\b|\bfrom\b|\bbudget\b|₹|\brs\b|\binr\b|\bsolo\b|\bcouple\b|\bfor\s+\d{1,2}\s*(?:adults?|grown[ -]?ups?|kids?|children|elders?|grandparents?|friends?)\b|\b(?:grandmother|grandfather|grandma|grandpa|elderly parent)\b|\bfamily\b|\bfriends?\b|\bi\s+(?:like|love|enjoy)\b|\binterests?\b|\bpace\b|$))/i);
-  if (destination) next.destination = destination[1].trim().replace(/\s+for\s+(?:a\s+)?(?:family|group|party)\s+of\s+\d+.*$/i, '').replace(/\s+for\s+(?:a\s+)?$/i, '').replace(/\s+/g,' ');
+  if (destination) { const parsedDestination = destination[1].trim().replace(/\s+for\s+(?:a\s+)?(?:family|group|party)\s+of\s+\d+.*$/i, '').replace(/\s+for\s+(?:a\s+)?$/i, '').replace(/\s+/g,' '); if (isUsableDestination(parsedDestination)) next.destination = parsedDestination; }
   else if (!current.destination && (expected === 'destination' || expected === 'destination_dates') && !amount && !/^(plan\s+a\s+trip|start\s+over|continue\s+my\s+plan)$/i.test(message.trim())) {
     // A date range such as "15/10/2026 to 19/10/2026" leaves only the
     // connector "to" after dates are removed. Never promote that residue to
@@ -149,7 +152,7 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
       .trim();
     const nonDestination = /^(?:to|from|and|or|in|at|on|for|around|dates?|travel|travel dates|trip|holiday|vacation|itinerary)$/i;
     const cleanedCandidate = candidate.replace(/\s+for\s+(?:a\s+)?(?:family|group|party)\s+of\s+\d+.*$/i, '').trim();
-    if (cleanedCandidate && cleanedCandidate.length <= 80 && /[a-z]/i.test(cleanedCandidate) && !/\d/.test(cleanedCandidate) && !nonDestination.test(cleanedCandidate)) next.destination = cleanedCandidate;
+    if (cleanedCandidate && cleanedCandidate.length <= 80 && !/\d/.test(cleanedCandidate) && isUsableDestination(cleanedCandidate)) next.destination = cleanedCandidate;
   }
   const interest = message.match(/\b(?:i\s+(?:like|love|enjoy)|interested\s+in|interests?\s*:?|into)\s+(.+?)(?=\s*,?\s*(?:relaxed|normal|packed)(?:\s+pace)?\b|$)/i);
   const knownInterests = [...new Set(lower.match(/\b(?:nature|food|temples?|beaches?|history|culture|shopping|adventure|art|architecture|wildlife|nightlife|wellness|photography|heritage|hiking|trekking|coffee|local\s+food)\b/g) || [])];
