@@ -108,9 +108,9 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
   if (foundDates.length > 1) { next.start_date = foundDates[0]; next.end_date = foundDates[1]; }
   else if (foundDates.length === 1) { if (expected === 'end_date' || (current.start_date && !current.end_date)) next.end_date = foundDates[0]; else next.start_date = foundDates[0]; }
   const currencyCodes = 'inr|usd|eur|gbp|aud|cad|nzd|aed|sar|qar|sgd|myr|thb|idr|jpy|krw|cny|hkd|chf|zar';
-  const amount = lower.match(new RegExp('(?:₹|\\brs\\.?\\s*|\\b(?:' + currencyCodes + ')\\s*|\\$|€|£)(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b','i'))
+  const amount = lower.match(new RegExp('(?:₹|\\brs\\.?\\s*|\\b(?:' + currencyCodes + ')\\s*|a\\$|c\\$|nz\\$|us\\$|\\$|€|£)(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b','i'))
     || lower.match(new RegExp('\\b(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\s*(?:' + currencyCodes + ')\\b','i'))
-    || lower.match(new RegExp('\\bbudget\\b[^\\d₹$]{0,24}(?:₹|rs\\.?\\s*|(?:' + currencyCodes + ')\\s*|\\$\\s*)?(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b','i'))
+    || lower.match(new RegExp('\\bbudget\\b[^\\d₹$]{0,24}(?:₹|rs\\.?\\s*|(?:' + currencyCodes + ')\\s*|a\\$|c\\$|nz\\$|us\\$|\\$\\s*)?(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b','i'))
     || lower.match(/\b(\\d[\\d,]*(?:\\.\\d+)?)\\s*(?:rupees?|inr)\\b/i)
     || (expected === 'budget_inr' ? lower.match(/\b(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k|thousand|lakh|lac|l)?\\b/i) : null);
   if (amount) {
@@ -119,7 +119,7 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
     const factors: Record<string,number> = { INR:1, USD:.012, EUR:.011, GBP:.0094, AUD:.018, CAD:.016, NZD:.020, AED:.044, SAR:.045, QAR:.044, SGD:.016, MYR:.050, THB:.44, IDR:185, JPY:1.78, KRW:16.6, CNY:.086, HKD:.094, CHF:.010, ZAR:.22 };
     const explicitInr = /₹|\brs\.?|\binr\b|\brupees?\b/i.test(lower);
     const explicitCode = lower.match(new RegExp('\\b(' + currencyCodes + ')\\b','i'))?.[1]?.toUpperCase();
-    const explicitSymbolCurrency = /€/.test(lower) ? 'EUR' : /£/.test(lower) ? 'GBP' : /\$/.test(lower) ? 'USD' : null;
+    const explicitSymbolCurrency = /a\$/.test(lower) ? 'AUD' : /c\$/.test(lower) ? 'CAD' : /nz\$/.test(lower) ? 'NZD' : /us\$/.test(lower) ? 'USD' : /€/.test(lower) ? 'EUR' : /£/.test(lower) ? 'GBP' : /\$/.test(lower) ? 'USD' : null;
     const sourceCurrency = explicitCode || explicitSymbolCurrency || String(displayCurrency || 'INR').toUpperCase();
     const factor = explicitInr ? 1 : (factors[sourceCurrency] || 1);
     next.budget_inr = Math.round(base / factor);
