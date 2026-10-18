@@ -646,8 +646,8 @@ Deno.serve(async (req) => {
           const reply = "No search results for " + trip.destination + " yet. We don’t have this destination in Trip Assistant yet. Please choose a city available in Hotels, Villas, Holiday Packages, or Tours.";
           return json({ ok: false, destination_not_found: true, reply, error: reply });
         }
-        if (verifiedSights < minSightCount || verifiedFood < minFoodCount) {
-          const reply = "I found " + groundedDest.title + ", but couldn’t verify enough distinct nearby places and local dishes for all " + count + " days. Try fewer days or a different city.";
+        if (!verifiedSights || !verifiedFood) {
+          const reply = "I found " + groundedDest.title + ", but there are no usable sight or local-food entries to build this itinerary yet. Please try a city with more listings.";
           return json({ ok: false, catalogue_missing: true, reply, error: reply });
         }
       }
@@ -727,8 +727,8 @@ Deno.serve(async (req) => {
       const daySelections: Array<{ sights: any[]; foods: any[] }> = [];
       for (let day = 0; day < count; day++) {
         const unused = [...sightRows].filter((place: any) => !used.has(place.id));
-        const futureMinimum = Math.max(0, count - day - 1) * 2;
-        const targetToday = Math.min(maxSights, Math.max(2, unused.length - futureMinimum));
+        const daysRemaining = count - day;
+        const targetToday = unused.length ? Math.min(maxSights, Math.max(1, Math.ceil(unused.length / Math.max(1, daysRemaining)))) : 0;
         const nearby = unused.filter((place: any) => km(selectedStay, place) <= 15);
         const candidates = [...(nearby.length >= Math.max(1, targetToday - (day === 0 && offbeat ? 1 : 0)) ? nearby : unused)];
         const picked: any[] = [];
@@ -748,8 +748,10 @@ Deno.serve(async (req) => {
           return foodRouteScore(b) - foodRouteScore(a);
         });
         const foods: any[] = [];
+        const unusedFoodCount = sortedFood.filter((place: any) => !usedFood.has(String(place.id || place.wiki_title || place.name))).length;
+        const foodTargetToday = unusedFoodCount ? Math.min(targetFoodPerDay, Math.max(1, Math.ceil(unusedFoodCount / Math.max(1, count - day)))) : 0;
         for (const place of sortedFood) {
-          if (foods.length >= targetFoodPerDay) break;
+          if (foods.length >= foodTargetToday) break;
           const id = String(place.id || place.wiki_title || place.name);
           if (usedFood.has(id)) continue;
           foods.push(place); usedFood.add(id);
@@ -785,7 +787,7 @@ Deno.serve(async (req) => {
         const dailyCost = stayNight + dailyFloor + sightseeingCost + foodCost;
         const activities = [...stops.map((stop: any) => stop.name), ...foodStops.map((stop: any) => stop.name)];
         const reasons = [...stops.map((stop: any) => stop.reason), ...foodStops.map((stop: any) => stop.reason)];
-        const restNote = family ? 'Leave a relaxed rest break at the family-friendly stay for children and elders.' : (!stops.length ? 'The destination catalogue has no additional distinct sights for this day; keep it open for rest or choose a new location.' : '');
+        const restNote = [family ? 'Leave a relaxed rest break at the family-friendly stay for children and elders.' : '', !stops.length ? 'Keep this as a flexible rest or neighbourhood day; no additional distinct sights are listed for this day.' : '', !foodStops.length ? 'Use the meal allowance for a local meal of your choice; no additional distinct dish is listed for this day.' : ''].filter(Boolean).join(' ');
         return { day: i + 1, date: new Date(Date.parse(`${trip.start_date}T00:00:00Z`) + i * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), stay: selectedStay.name, stops, food_stops: foodStops, stay_cost_inr: stayNight, sightseeing_cost_inr: sightseeingCost, food_cost_inr: foodCost, daily_allowance_inr: dailyFloor, rest_note: restNote, activities, reasons, est_cost_inr: dailyCost };
       });
       const costBreakdown = {
@@ -803,9 +805,10 @@ Deno.serve(async (req) => {
         ? 'no catalogue hotel stay; accommodation is excluded from the total'
         : `${rooms} room${rooms === 1 ? '' : 's'} for ${nights} night${nights === 1 ? '' : 's'}`;
       const summary = `${count}-day ${effectivePace} ${family ? 'family ' : ''}plan for ${placeLabel}, ${trip.start_date} to ${trip.end_date}. It includes ${stayText}, ${groundedDest ? 'sights and local food verified on Wikipedia' : 'destination-catalogue sights, local food'}, and a ${googleCosts.size ? 'Google Search-grounded' : 'site catalogue'} estimate for sights and food, plus a ₹${Math.round(dailyFloor / people).toLocaleString('en-IN')}-per-person daily allowance. Total estimate ₹${total.toLocaleString('en-IN')} stays within your ₹${budget.toLocaleString('en-IN')} budget; airfare is excluded.`;
-      const catalogueNote = allowanceStay
-        ? `Sorry, we don’t have hotel listings for ${placeLabel} in this site yet. I haven’t invented a stay; accommodation is not included in the estimate. You can check Hotels for any listings added later.`
+      const coverageNote = sightRows.length < count * 2 || foodRows.length < count * targetFoodPerDay
+        ? `I found ${sightRows.length} distinct sights and ${foodRows.length} distinct local dishes for this ${count}-day trip. I’ve spread them across the days and kept any remaining time flexible rather than inventing or repeating stops.`
         : '';
+      const catalogueNote = [allowanceStay ? `Sorry, we don’t have hotel listings for ${placeLabel} in this site yet. I haven’t invented a stay; accommodation is not included in the estimate. You can check Hotels for any listings added later.` : '', coverageNote].filter(Boolean).join(' ');
       return json({ ok: true, catalogue_note: catalogueNote, plan: { days, total_cost_inr: total, cost_breakdown_inr: costBreakdown, cost_source: googleCosts.size ? 'Google Search + site catalogue' : 'Site catalogue estimates', summary, pace: effectivePace, hotel, rooms, nights, stay_total_inr: hotelTotal, stay_allowance_inr: null, stay_choice_open: allowanceStay, destination_photo: groundedDest?.photo || null, destination_title: groundedDest?.title || null }, trip, hotels: hotelOptions, places: places.map((place: any) => ({ id: place.id, name: place.name, kind: place.kind, area: place.area, lat: place.lat == null ? null : Number(place.lat), lng: place.lng == null ? null : Number(place.lng), offbeat: Boolean(place.offbeat), wiki_title: place.wiki_title, photo_url: place.photo_url || null, photo_credit: place.photo_credit || null, source_url: place.source_url || null })) });
     }
 
