@@ -158,6 +158,14 @@ function parseTripMessage(message: string, current: ReturnType<typeof cleanTrip>
   else if (expected === 'interests' && !/\b(relaxed|normal|packed)(?:\s+pace)?\b/i.test(lower)) next.interests = message.trim().slice(0,300);
   return next;
 }
+function normalizeDestination(value: unknown) {
+  return String(value || '').trim()
+    .replace(/^(?:please\s+)?(?:plan|make|create|build)\s+(?:me\s+)?(?:a\s+)?(?:(?:\d{1,2}\s*[- ]?day\s+)?(?:trip|itinerary|holiday|vacation))\s+(?:to|for|in)\s+/i, '')
+    .replace(/^(?:to|for|in)\s+/i, '')
+    .replace(/\s+for\s+\d{1,2}\s*[- ]?days?$/i, '')
+    .replace(/\s+(?:for|with)(?:\s+(?:a|an|the|my|our))?\s*$/i, '')
+    .replace(/\s+/g, ' ').trim().slice(0, 100);
+}
 function cleanTrip(raw: Record<string, unknown> = {}) {
   const travellers = String(raw.travellers_type || '').toLowerCase();
   const pace = String(raw.pace || '').toLowerCase();
@@ -168,8 +176,12 @@ function cleanTrip(raw: Record<string, unknown> = {}) {
   const requestedEndDate = dateOK(raw.end_date) ? String(raw.end_date) : null;
   let endDate = startDate && requestedEndDate && requestedEndDate < startDate ? null : requestedEndDate;
   const durationDays = Number.isInteger(duration) && duration >= 1 && duration <= 60 ? duration : null;
+  if (startDate && endDate === startDate && durationDays && durationDays > 1) {
+    endDate = new Date(Date.parse(startDate + 'T00:00:00Z') + (durationDays - 1) * 86400000).toISOString().slice(0, 10);
+  }
+  const destination = normalizeDestination(raw.destination);
   return {
-    destination: isUsableDestination(raw.destination) ? String(raw.destination).trim().replace(/\s+(?:for|with)(?:\s+(?:a|an|the|my|our))?\s*$/i, '').trim().slice(0, 100) : '',
+    destination: isUsableDestination(destination) ? destination : '',
     start_date: startDate,
     end_date: endDate,
     duration_days: durationDays,
@@ -345,7 +357,7 @@ function nearestLargerTown(city: string) {
 }
 function dayCount(t: ReturnType<typeof cleanTrip>) {
   const diff = Math.max(0, Math.round((Date.parse(`${t.end_date}T00:00:00Z`) - Date.parse(`${t.start_date}T00:00:00Z`)) / 86400000));
-  return Math.min(60, diff + 1);
+  return Math.min(60, t.duration_days || diff + 1);
 }
 async function persistPartial(userId: string | undefined, id: string | undefined, t: ReturnType<typeof cleanTrip>) {
   if (!userId || !t.destination) return null;
@@ -593,7 +605,7 @@ Deno.serve(async (req) => {
     if (action === 'plan') {
       const trip = cleanTrip((body.trip || {}) as Record<string, unknown>);
       const missing = missingQuestion(trip);
-      if (missing) return json({ ok: false, error: missing.text }, 422);
+      if (missing) return json({ ok: false, error: missing.text });
       const city = canonicalCity(trip.destination);
       const [{ data: hotelRows, error: hotelError }, { data: placeRows, error: placeError }] = await Promise.all([
         admin.from('catalogue_hotels').select('id,city,name,price_per_night_inr,area,tags,lat,lng,address,photos').ilike('city', city).order('price_per_night_inr'),
@@ -605,13 +617,6 @@ Deno.serve(async (req) => {
       }
       const catalogue = Array.isArray(hotelRows) ? hotelRows : [];
       let places: any[] = Array.isArray(placeRows) ? placeRows : [];
-      if (!catalogue.length && !places.length) {
-        return json({
-          ok: true,
-          destination_not_found: true,
-          reply: `No search results for ${trip.destination} yet. We don’t have this destination in Trip Assistant yet. Please choose a destination that appears in the Hotels, Villas, Holiday Packages, or Tours sections.`,
-        });
-      }
       const count = dayCount(trip);
       const nights = Math.max(0, count - 1);
       const people = Math.max(1, Number(trip.travellers_count) || (trip.travellers_type === 'solo' ? 1 : trip.travellers_type === 'couple' ? 2 : trip.travellers_type === 'family' ? 4 : 3));
@@ -627,7 +632,7 @@ Deno.serve(async (req) => {
       const currentSights = places.filter((p: any) => p.kind === 'sight').length;
       const currentFoods = places.filter((p: any) => p.kind === 'food').length;
       if (currentSights < minSightCount || currentFoods < minFoodCount || places.length < 12) {
-        const grounded = await groundedPlacesFor(trip.destination, trip.interests, count, groq);
+        const grounded = await groundedPlacesFor(trip.destination, trip.interests, count, groq, targetFoodPerDay);
         groundedDest = grounded.dest;
         const unique = new Map<string, any>();
         for (const place of [...places, ...grounded.places]) {
@@ -637,8 +642,13 @@ Deno.serve(async (req) => {
         places = [...unique.values()];
         const verifiedSights = places.filter((p: any) => p.kind === 'sight').length;
         const verifiedFood = places.filter((p: any) => p.kind === 'food').length;
-        if (!groundedDest || verifiedSights < minSightCount || verifiedFood < minFoodCount) {
-          return json({ ok: false, catalogue_missing: true, error: `I couldn’t find enough distinct, photo-matched places and local dishes for all ${count} days in ${trip.destination}. I won’t repeat or invent stops; try fewer days or another destination.` }, 422);
+        if (!groundedDest || groundedDest.isRegion) {
+          const reply = "No search results for " + trip.destination + " yet. We don’t have this destination in Trip Assistant yet. Please choose a city available in Hotels, Villas, Holiday Packages, or Tours.";
+          return json({ ok: false, destination_not_found: true, reply, error: reply });
+        }
+        if (verifiedSights < minSightCount || verifiedFood < minFoodCount) {
+          const reply = "I found " + groundedDest.title + ", but couldn’t verify enough distinct nearby places and local dishes for all " + count + " days. Try fewer days or a different city.";
+          return json({ ok: false, catalogue_missing: true, reply, error: reply });
         }
       }
       const allowanceStay = !catalogue.length;
@@ -699,7 +709,7 @@ Deno.serve(async (req) => {
       const offbeatRows = [...sightRows].filter((place: any) => place.offbeat);
       const nearbyOffbeat = offbeatRows.filter((place: any) => km(selectedStay, place) <= 15);
       const offbeat = [...(nearbyOffbeat.length ? nearbyOffbeat : offbeatRows)].sort((a: any, b: any) => score(b, true) - score(a, true))[0];
-      if (!sightRows.length || !foodRows.length || !offbeat) return json({ ok: false, error: `The ${city} catalogue needs sights, food stops, and at least one less-crowded sight before Myra can make a grounded plan.` }, 422);
+      if (!sightRows.length || !foodRows.length || !offbeat) return json({ ok: false, error: `The ${city} catalogue needs sights, food stops, and at least one less-crowded sight before Myra can make a grounded plan.` });
       const used = new Set<string>();
       const usedFood = new Set<string>();
       const maxSights = family || effectivePace === 'relaxed' ? 2 : effectivePace === 'packed' ? 5 : 3;
@@ -978,7 +988,7 @@ async function groqPlaces(messages: unknown[]) {
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'openai/gpt-oss-20b', messages, temperature: 0.2, reasoning_effort: 'low', max_completion_tokens: 4000, response_format: { type: 'json_object' } }),
+        body: JSON.stringify({ model: 'openai/gpt-oss-20b', messages, temperature: 0.2, reasoning_effort: 'low', max_completion_tokens: 6000, response_format: { type: 'json_object' } }),
         signal: controller.signal,
       });
       const text = await res.text();
@@ -999,13 +1009,13 @@ async function groqPlaces(messages: unknown[]) {
  * Build a verified list of sights and dishes for any destination.
  * Returns rows in the same shape as catalogue_places so the normal planner can use them.
  */
-async function groundedPlacesFor(destination: string, interests: string, days: number, groq: Groq) {
+async function groundedPlacesFor(destination: string, interests: string, days: number, groq: Groq, foodPerDay = 2) {
   const dest = await resolveDestination(destination);
-  if (!dest || dest.lat === null || dest.lng === null) return { dest: null, places: [] as any[] };
+  if (!dest || dest.lat === null || dest.lng === null || dest.isRegion) return { dest: null, places: [] as any[] };
   const center = { lat: dest.lat, lng: dest.lng as number };
   const nearby = dest.isRegion ? [] : await nearbySights(center.lat, center.lng);
   const wantSights = Math.min(16, Math.max(8, days * 3 + 2));
-  const wantDishes = Math.min(10, Math.max(8, days + 4));
+  const wantDishes = Math.min(30, Math.max(12, days * foodPerDay + 6));
   let ai: any = {};
   try {
     ai = await groqPlaces([
@@ -1051,13 +1061,13 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   const addRow = (row: any) => { const key = `${row.kind}:${row.wiki_title.toLowerCase()}`; if (!seen.has(key)) { seen.add(key); rows.push(row); } };
   for (const s of aiSights) {
     const page = byTitle(s?.title);
-    if (!page || !page.photo) continue;
+    if (!page) continue;
     if (FOOD_WORDS.test(page.description) && !SIGHT_WORDS.test(page.description)) continue;
     if (NOT_A_SIGHT.test(page.description)) continue;
     if (page.lat !== null && page.lng !== null) {
       if (kmBetween(center, { lat: page.lat, lng: page.lng }) > maxKm) continue;
     } else if (!page.description.toLowerCase().includes(destWords)) continue;
-    addRow({ id: `wiki-s-${rows.length}`, kind: 'sight', name: page.title.replace(/\s*\((?:[^)]*)\)\s*$/, ''), wiki_title: page.title, area: String(s?.area || page.description || dest.title).slice(0, 80), lat: page.lat, lng: page.lng, offbeat: s?.offbeat === true || s?.offbeat === 'true', interests: Array.isArray(s?.interests) ? s.interests.map(String).slice(0, 6) : [], typical_cost_inr: Math.min(2000, Math.max(0, Math.round(Number(s?.entry_fee_inr) || 0))), photo_url: page.photo, photo_credit: 'Wikipedia', source_url: page.url, description: page.description });
+    addRow({ id: `wiki-s-${rows.length}`, kind: 'sight', name: page.title.replace(/\s*\((?:[^)]*)\)\s*$/, ''), wiki_title: page.title, area: String(s?.area || page.description || dest.title).slice(0, 80), lat: page.lat, lng: page.lng, offbeat: s?.offbeat === true || s?.offbeat === 'true', interests: Array.isArray(s?.interests) ? s.interests.map(String).slice(0, 6) : [], typical_cost_inr: Math.min(2000, Math.max(0, Math.round(Number(s?.entry_fee_inr) || 0))), photo_url: page.photo || '', photo_credit: 'Wikipedia', source_url: page.url, description: page.description });
   }
   // Fill gaps with verified nearby sights (they already have photos and coordinates).
   for (const p of nearby) {
@@ -1066,8 +1076,8 @@ async function groundedPlacesFor(destination: string, interests: string, days: n
   }
   for (const d of aiDishes) {
     const page = byTitle(d?.title);
-    if (!page || !page.photo || !FOOD_WORDS.test(`${page.title} ${page.description}`)) continue;
-    addRow({ id: `wiki-f-${rows.length}`, kind: 'food', name: page.title.replace(/\s*\((?:[^)]*)\)\s*$/, ''), wiki_title: page.title, area: String(d?.where_to_try || dest.title).slice(0, 80), lat: null, lng: null, offbeat: false, interests: ['food'], typical_cost_inr: Math.min(1500, Math.max(50, Math.round(Number(d?.cost_per_person_inr) || 200))), photo_url: page.photo, photo_credit: 'Wikipedia', source_url: page.url, veg: d?.veg === true || d?.veg === 'true', description: page.description });
+    if (!page || !FOOD_WORDS.test(`${page.title} ${page.description}`)) continue;
+    addRow({ id: `wiki-f-${rows.length}`, kind: 'food', name: page.title.replace(/\s*\((?:[^)]*)\)\s*$/, ''), wiki_title: page.title, area: String(d?.where_to_try || dest.title).slice(0, 80), lat: null, lng: null, offbeat: false, interests: ['food'], typical_cost_inr: Math.min(1500, Math.max(50, Math.round(Number(d?.cost_per_person_inr) || 200))), photo_url: page.photo || '', photo_credit: 'Wikipedia', source_url: page.url, veg: d?.veg === true || d?.veg === 'true', description: page.description });
   }
   // Make sure at least one sight is marked less-crowded: pick the least-known verified one.
   const sights = rows.filter(r => r.kind === 'sight');
