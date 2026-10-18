@@ -19,7 +19,9 @@ function normalizeSupabaseUrl(url) {
 const SUPABASE_URL = normalizeSupabaseUrl(process.env.SUPABASE_URL);
 const SUPABASE_KEY = (process.env.SUPABASE_ANON_KEY || 'sb_publishable_nT9C6_S0qenCMCNT5sV3tw_numZd1JP').trim().replace(/^[^\w]+|[^\w]+$/g, '');
 const GEMINI_KEY = String(process.env.GEMINI_API_KEY || process.env.API_KEY || '').trim();
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// Tried in order until one answers (AI Studio's current default first).
+const GEMINI_MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'].filter(Boolean))];
+const GEMINI_MODEL = GEMINI_MODELS[0];
 const FUNCTION_URL = process.env.MYRA_FUNCTION_URL || `${SUPABASE_URL}/functions/v1/myra-chat`;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8' };
 const NO_CACHE = { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache', Expires: '0' };
@@ -120,16 +122,22 @@ async function geminiPlan(req, res) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
-      method: 'POST', signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: planPrompt(trip, currency, body.change_request, body.current_plan) }] }],
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.6, thinkingConfig: { thinkingBudget: 0 } },
-      }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) { console.error('[Myra Gemini]', r.status, data?.error?.message); return sendJson(res, 200, { ok: false, code: 'gemini_error', error: data?.error?.message || `Gemini returned ${r.status}` }); }
+    let data = null, lastError = '';
+    for (const model of GEMINI_MODELS) {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY, 'User-Agent': 'aistudio-build' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: planPrompt(trip, currency, body.change_request, body.current_plan) }] }],
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.6 },
+        }),
+      });
+      const json = await r.json().catch(() => ({}));
+      if (r.ok) { data = json; console.log('[Myra Gemini] plan from', model); break; }
+      lastError = json?.error?.message || `Gemini returned ${r.status}`;
+      console.error('[Myra Gemini]', model, r.status, lastError);
+    }
+    if (!data) return sendJson(res, 200, { ok: false, code: 'gemini_error', error: lastError });
     const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
     const parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ''));
     const plan = toPlan(parsed, trip, currency);
