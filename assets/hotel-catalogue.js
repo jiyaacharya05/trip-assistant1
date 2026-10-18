@@ -71,10 +71,11 @@ export const HOTELS = [
     "lng": 77.6408,
     "address": "Indiranagar, Bengaluru",
     "photos": [
-      "https://images.pexels.com/photos/14845309/pexels-photo-14845309.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/15223780/pexels-photo-15223780.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/1861153/pexels-photo-1861153.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/23973679/pexels-photo-23973679.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop"
+      "assets/hotel-curated-09.jpg",
+      "assets/hotel-exclusive-001.jpg",
+      "assets/hotel-exclusive-010.jpg",
+      "assets/hotel-exclusive-015.jpg",
+      "assets/hotel-exclusive-019.jpg"
     ]
   },
   {
@@ -355,7 +356,7 @@ export const HOTELS = [
   {
     "city": "Bengaluru",
     "name": "Jayanagar Heritage House",
-    "price_per_night_inr": 2800,
+    "price_per_night_inr": 3700,
     "area": "Jayanagar",
     "tags": [
       "offbeat",
@@ -366,10 +367,11 @@ export const HOTELS = [
     "lng": 77.5838,
     "address": "Jayanagar, Bengaluru",
     "photos": [
-      "https://images.pexels.com/photos/28238364/pexels-photo-28238364.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/28320062/pexels-photo-28320062.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/29705835/pexels-photo-29705835.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/33448397/pexels-photo-33448397.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop"
+      "assets/hotel-exclusive-042.jpg",
+      "assets/hotel-exclusive-004.jpg",
+      "assets/hotel-exclusive-008.jpg",
+      "assets/hotel-exclusive-013.jpg",
+      "assets/hotel-exclusive-028.jpg"
     ]
   },
   {
@@ -860,6 +862,89 @@ export const HOTELS = [
       "assets/hotel-exclusive-055.jpg",
       "assets/hotel-exclusive-056.jpg",
       "assets/hotel-exclusive-057.jpg"
+    ]
+  },
+  {
+    "city": "Bengaluru",
+    "name": "Koramangala Park Inn",
+    "price_per_night_inr": 3350,
+    "area": "Koramangala",
+    "tags": [
+      "popular",
+      "budget"
+    ],
+    "id": "8a8aa109-6c8e-4b8a-9a01-81e4f9b72601",
+    "lat": 12.9352,
+    "lng": 77.6245,
+    "address": "Koramangala, Bengaluru",
+    "photos": [
+      "assets/hotel-exclusive-032.jpg",
+      "assets/hotel-exclusive-005.jpg",
+      "assets/hotel-exclusive-029.jpg",
+      "assets/hotel-exclusive-043.jpg",
+      "assets/hotel-exclusive-044.jpg"
+    ]
+  },
+  {
+    "city": "Bengaluru",
+    "name": "MG Road Residency",
+    "price_per_night_inr": 3400,
+    "area": "MG Road",
+    "tags": [
+      "popular"
+    ],
+    "id": "8a8aa109-6c8e-4b8a-9a01-81e4f9b72602",
+    "lat": 12.9756,
+    "lng": 77.6067,
+    "address": "MG Road, Bengaluru",
+    "photos": [
+      "assets/hotel-exclusive-033.jpg",
+      "assets/hotel-exclusive-011.jpg",
+      "assets/hotel-exclusive-023.jpg",
+      "assets/hotel-exclusive-030.jpg",
+      "assets/hotel-exclusive-036.jpg"
+    ]
+  },
+  {
+    "city": "Bengaluru",
+    "name": "Whitefield Tech Suites",
+    "price_per_night_inr": 3500,
+    "area": "Whitefield",
+    "tags": [
+      "popular",
+      "family-friendly"
+    ],
+    "id": "8a8aa109-6c8e-4b8a-9a01-81e4f9b72603",
+    "lat": 12.9698,
+    "lng": 77.75,
+    "address": "Whitefield, Bengaluru",
+    "photos": [
+      "assets/hotel-exclusive-045.jpg",
+      "assets/hotel-exclusive-007.jpg",
+      "assets/hotel-exclusive-012.jpg",
+      "assets/hotel-exclusive-025.jpg",
+      "assets/hotel-exclusive-027.jpg"
+    ]
+  },
+  {
+    "city": "Bengaluru",
+    "name": "HSR Urban Hotel",
+    "price_per_night_inr": 3600,
+    "area": "HSR Layout",
+    "tags": [
+      "offbeat",
+      "budget"
+    ],
+    "id": "8a8aa109-6c8e-4b8a-9a01-81e4f9b72604",
+    "lat": 12.9116,
+    "lng": 77.6389,
+    "address": "HSR Layout, Bengaluru",
+    "photos": [
+      "assets/hotel-exclusive-035.jpg",
+      "assets/hotel-exclusive-003.jpg",
+      "assets/hotel-exclusive-016.jpg",
+      "assets/hotel-exclusive-020.jpg",
+      "assets/hotel-exclusive-039.jpg"
     ]
   }
 ];
