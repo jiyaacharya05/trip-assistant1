@@ -191,12 +191,28 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
   const currencyPresets={"INR":{"symbol":"₹","factor":1},"USD":{"symbol":"US$","factor":0.012},"EUR":{"symbol":"€","factor":0.011},"GBP":{"symbol":"£","factor":0.0094},"AUD":{"symbol":"A$","factor":0.018},"CAD":{"symbol":"C$","factor":0.016},"NZD":{"symbol":"NZ$","factor":0.02},"AED":{"symbol":"AED ","factor":0.044},"SAR":{"symbol":"SAR ","factor":0.045},"QAR":{"symbol":"QAR ","factor":0.044},"SGD":{"symbol":"S$","factor":0.016},"MYR":{"symbol":"RM ","factor":0.05},"THB":{"symbol":"฿","factor":0.44},"IDR":{"symbol":"Rp ","factor":185},"JPY":{"symbol":"¥","factor":1.78},"KRW":{"symbol":"₩","factor":16.6},"CNY":{"symbol":"CN¥","factor":0.086},"HKD":{"symbol":"HK$","factor":0.094},"CHF":{"symbol":"CHF ","factor":0.01},"ZAR":{"symbol":"R ","factor":0.22}};
   function readSavedCurrency(){try{const saved=JSON.parse(localStorage.getItem('trip-assistant-locale')||'null');const code=String(saved?.code||'').toUpperCase();return currencyPresets[code]?{...currencyPresets[code],code,userSelected:true}:null}catch{return null}}
   function applyDisplayCurrency(raw={},userSelected=Boolean(raw.userSelected)){const code=String(raw.code||'INR').toUpperCase(),preset=currencyPresets[code];if(!preset)return;displayCurrency={...preset,...raw,code,userSelected,factor:Number(raw.factor)||preset.factor};myraDisplayLocale={...myraDisplayLocale,...displayCurrency};if(plan)renderPlan(plan)}
-  function applyDestinationCurrency(destination){const saved=readSavedCurrency();if(saved){applyDisplayCurrency(saved,true);return}if(displayCurrency.userSelected)return;const code=/\b(?:sydney|australia|new south wales|nsw)\b/i.test(String(destination||''))?'AUD':'INR';applyDisplayCurrency({...currencyPresets[code],code,userSelected:false},false)}
+  function destinationCurrencyCode(destination){const text=String(destination||'');const rules=[
+['AUD',/\b(?:australia|sydney|melbourne|brisbane|perth|adelaide|canberra|hobart|darwin|gold coast|new south wales|nsw|queensland|victoria|tasmania)\b/i],
+['GBP',/\b(?:united kingdom|\buk\b|england|scotland|wales|london|manchester|edinburgh|glasgow|liverpool|oxford|cambridge)\b/i],
+['USD',/\b(?:united states|\busa\b|\bus\b|america|new york|los angeles|san francisco|chicago|boston|hawaii|miami|las vegas)\b/i],
+['CAD',/\b(?:canada|toronto|vancouver|montreal|quebec|ottawa|calgary)\b/i],
+['NZD',/\b(?:new zealand|\bnz\b|auckland|wellington|queenstown|christchurch)\b/i],
+['AED',/\b(?:united arab emirates|\buae\b|dubai|abu dhabi|sharjah)\b/i],
+['QAR',/\b(?:qatar|doha)\b/i],['SAR',/\b(?:saudi arabia|riyadh|jeddah|mecca|medina)\b/i],['SGD',/\b(?:singapore)\b/i],
+['EUR',/\b(?:france|paris|nice|lyon|germany|berlin|munich|italy|rome|venice|florence|spain|madrid|barcelona|portugal|lisbon|greece|athens|netherlands|amsterdam|belgium|brussels|austria|vienna|ireland|dublin|sweden|stockholm|norway|oslo|finland|helsinki|denmark|copenhagen|iceland|prague|czech republic|poland|warsaw|croatia|dubrovnik)\b/i],
+['MYR',/\b(?:malaysia|kuala lumpur|penang|langkawi)\b/i],['THB',/\b(?:thailand|bangkok|phuket|chiang mai|krabi|pattaya)\b/i],
+['IDR',/\b(?:indonesia|bali|jakarta|yogyakarta|lombok)\b/i],['JPY',/\b(?:japan|tokyo|kyoto|osaka|hiroshima|hokkaido)\b/i],
+['KRW',/\b(?:south korea|seoul|busan|jeju)\b/i],['CNY',/\b(?:china|beijing|shanghai|guangzhou|chengdu|shenzhen)\b/i],
+['HKD',/\b(?:hong kong)\b/i],['CHF',/\b(?:switzerland|zurich|geneva|lucerne|bern)\b/i],
+['ZAR',/\b(?:south africa|cape town|johannesburg|durban|pretoria)\b/i],
+['INR',/\b(?:india|ahmedabad|bengaluru|bangalore|chennai|coorg|delhi|goa|hyderabad|jaipur|kolkata|mumbai|ooty|pune|udaipur|srinagar|kerala|rajasthan|gujarat|kashmir)\b/i]
+];return rules.find(([,pattern])=>pattern.test(text))?.[0]||''}
+function applyDestinationCurrency(destination){const saved=readSavedCurrency(),localCode=destinationCurrencyCode(destination);if(saved&&saved.code!=='INR'){applyDisplayCurrency(saved,true);return}const code=localCode||saved?.code||'INR';applyDisplayCurrency({...currencyPresets[code],code,userSelected:false},false)}
   const savedCurrencyAtOpen=readSavedCurrency();if(savedCurrencyAtOpen)applyDisplayCurrency(savedCurrencyAtOpen,true);
   window.addEventListener('storage',event=>{if(event.key==='trip-assistant-locale'){const saved=readSavedCurrency();if(saved)applyDisplayCurrency(saved,true)}});
   function moneyFromInr(value){const locale=displayCurrency||{};return `${locale.symbol||'₹'}${Math.round(Number(value||0)*(Number(locale.factor)||1)).toLocaleString(locale.code==='INR'?'en-IN':'en-US')}`}
   function localizeInrText(value){return String(value??'').replace(/₹\s*([\d,]+(?:\.\d+)?)/g,(_,amount)=>moneyFromInr(Number(String(amount).replaceAll(',',''))))}
-  function budgetToInr(value,unit,raw){const n=Number(value);const multiplier=/^(?:k|thousand)$/i.test(unit||'')?1000:/^(?:l|lac|lakh)$/i.test(unit||'')?100000:1;const text=String(raw||'').toLowerCase();const explicitInr=/₹|\brs\.?|\binr\b|\brupees?\b/i.test(text);const code=text.match(/\b(inr|usd|eur|gbp|aud|cad|nzd|aed|sar|qar|sgd|myr|thb|idr|jpy|krw|cny|hkd|chf|zar)\b/i)?.[1]?.toUpperCase();const symbol=/a\$/.test(text)?'AUD':/c\$/.test(text)?'CAD':/nz\$/.test(text)?'NZD':/us\$/.test(text)?'USD':/€/.test(text)?'EUR':/£/.test(text)?'GBP':/\$/.test(text)?'USD':null;const rates={INR:1,USD:.012,EUR:.011,GBP:.0094,AUD:.018,CAD:.016,NZD:.020,AED:.044,SAR:.045,QAR:.044,SGD:.016,MYR:.050,THB:.44,IDR:185,JPY:1.78,KRW:16.6,CNY:.086,HKD:.094,CHF:.010,ZAR:.22};const rate=explicitInr?1:(rates[code||symbol||displayCurrency.code]||Number(displayCurrency.factor)||1);return Math.round(n*multiplier/Math.max(rate,.000001))}
+  function budgetToInr(value,unit,raw,defaultCode=displayCurrency.code){const n=Number(value);const multiplier=/^(?:k|thousand)$/i.test(unit||'')?1000:/^(?:l|lac|lakh)$/i.test(unit||'')?100000:1;const text=String(raw||'').toLowerCase();const explicitInr=/₹|\brs\.?|\binr\b|\brupees?\b/i.test(text);const code=text.match(/\b(inr|usd|eur|gbp|aud|cad|nzd|aed|sar|qar|sgd|myr|thb|idr|jpy|krw|cny|hkd|chf|zar)\b/i)?.[1]?.toUpperCase();const symbol=/a\$/.test(text)?'AUD':/c\$/.test(text)?'CAD':/nz\$/.test(text)?'NZD':/us\$/.test(text)?'USD':/€/.test(text)?'EUR':/£/.test(text)?'GBP':/\$/.test(text)?'USD':null;const rates={INR:1,USD:.012,EUR:.011,GBP:.0094,AUD:.018,CAD:.016,NZD:.020,AED:.044,SAR:.045,QAR:.044,SGD:.016,MYR:.050,THB:.44,IDR:185,JPY:1.78,KRW:16.6,CNY:.086,HKD:.094,CHF:.010,ZAR:.22};const rate=explicitInr?1:(rates[code||symbol||defaultCode]||rates[displayCurrency.code]||Number(displayCurrency.factor)||1);return Math.round(n*multiplier/Math.max(rate,.000001))}
   const fmtDate=value=>value?new Intl.DateTimeFormat('en-IN',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(value+'T00:00:00')):'';
   function add(cls,html){openMessages();const e=document.createElement('div');e.className=cls;e.innerHTML=html;messages.appendChild(e);content.scrollTop=content.scrollHeight;return e}
   function greet(){const first=profile?.name?.trim().split(/\s+/)[0];$('welcome').querySelector('h1').textContent=first?`Hi ${first}!`:'Hi, There';$('welcome').querySelector('p').innerHTML=`I'm <strong>Myra</strong> — your trip planner. Where do you want to go?`;}
@@ -217,6 +233,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     if(/\b(relaxed|easy pace)\b/.test(lower))updated.pace='relaxed';else if(/\b(normal|moderate) pace\b/.test(lower)||/^normal$/i.test(q))updated.pace='normal';else if(/\b(packed|busy) pace\b/.test(lower)||/^packed$/i.test(q))updated.pace='packed';
     const interest=q.match(/\b(?:i\s+(?:like|love|enjoy)|interested\s+in|interests?\s*:?|into|focusing\s+on|focused\s+on)\s+(.+?)(?=\s*,?\s*(?:relaxed|normal|packed)(?:\s+pace)?\b|$)/i);if(interest)updated.interests=interest[1].trim().replace(/[.!]+$/,'');else{const known=[...new Set(lower.match(/\b(?:nature|food|temples?|beaches?|history|culture|shopping|adventure|art|architecture|wildlife|nightlife|wellness|photography|heritage|hiking|trekking|coffee|local\s+food)\b/g)||[])];if(known.length)updated.interests=known.slice(0,4).join(' and ');else if((expected==='interests'||expected==='interests_pace')&&!/\b(relaxed|normal|packed)(?:\s+pace)?\b/i.test(lower))updated.interests=q.replace(/^(?:i\s+(?:like|love|enjoy)|interested\s+in|into)\s+/i,'').trim()}
     const stopAt='(?=\\s*(?:,|\\bon\\b|\\bfrom\\b|\\bwith\\b|\\bfor\\s+\\d{1,2}\\s*(?:adults?|grown[ -]?ups?|kids?|children|elders?|grandparents?|friends?)\\b|\\b(?:grandmother|grandfather|grandma|grandpa|elderly parent)\\b|\\bitinerary\\b|\\bplan\\b|\\bbudget\\b|₹|\\brs\\b|\\binr\\b|\\bsolo\\b|\\bcouple\\b|\\bfamily\\b|\\bfriends?\\b|\\bi\\s+(?:like|love|enjoy)\\b|\\binterests?\\b|\\bpace\\b|\\b\\d+\\s*[- ]?day\\b|$))';const tripDestination=q.match(new RegExp('\\b(?:trip|holiday|vacation)\\s+(?:to|in|of)\\s+([a-z][a-z\\s\\x27-]{0,35}?)'+stopAt,'i'));const itineraryDestination=q.match(new RegExp('\\b(?:trip\\s+itinerary|itinerary(?:\\s+plan)?|trip\\s+plan)\\s+(?:for|to|in|around)\\s+([a-z][a-z\\s\\x27-]{0,35}?)'+stopAt,'i'));const destination=tripDestination||itineraryDestination||q.match(new RegExp('\\b(?:in|to|at)\\s+([a-z][a-z\\s\\x27-]{0,35}?)'+stopAt,'i'));if(destination)updated.destination=destination[1].trim().replace(/\s+for\s+(?:a\s+)?(?:family|group|party)\s+of\s+\d+.*$/i,'').replace(/\s+for\s+(?:a\s+)?$/i,'').replace(/\s+/g,' ');else if(!updated.destination&&(expected==='destination'||expected==='destination_dates')&&!bm&&!/^(?:(?:please\s+)?(?:plan\s+(?:a|my)\s+trip|start\s+(?:a\s+)?new\s+trip|start\s+over|continue\s+my\s+plan)|(?:i\s+)?(?:want|need)\s+to\s+plan\s+(?:a\s+)?trip|help\s+me\s+plan\s+(?:a\s+)?trip)[.!\s]*$/i.test(q)){const candidate=stripDatesForDestination(q).replace(/[,.!?]+$/,'').split(/[,.!?]/)[0].replace(/^\s*(?:to|in|at|around)\s+/i,'').replace(/\s+(?:to|and|from)\s*$/i,'').trim();const cleanCandidate=candidate.replace(/\s+for\s+(?:a\s+)?(?:family|group|party)\s+of\s+\d+.*$/i,'').replace(/\s+for\s+(?:a\s+)?$/i,'').trim();if(cleanCandidate&&!/^(?:to|from|and|or|in|at|on|for|around|dates?|travel dates?|trip|holiday|vacation|itinerary)$/i.test(cleanCandidate))updated.destination=cleanCandidate}
+    if(bm){const amount=Number(bm[1].replace(/,/g,'')),unit=String(bm[2]||'').toLowerCase();const explicit=/₹|\brs\.?|\binr\b|\brupees?\b|\busd\b|\beur\b|\bgbp\b|\baud\b|\bcad\b|\bnzd\b|\baed\b|\bsar\b|\bqar\b|\bsgd\b|\bmyr\b|\bthb\b|\bidr\b|\bjpy\b|\bkrw\b|\bcny\b|\bhkd\b|\bchf\b|\bzar\b|\$|€|£/i.test(q);const code=displayCurrency.userSelected&&displayCurrency.code!=='INR'?displayCurrency.code:(destinationCurrencyCode(updated.destination)||displayCurrency.code);if(!explicit)updated.budget_inr=budgetToInr(amount,unit,q,code)}
     return updated}
   function firstMissing(t){if(!validDestination(t.destination)||!t.start_date||!t.end_date)return'destination_dates';if(!t.budget_inr)return'budget_inr';if(!t.travellers_type)return'travellers_type';if(!t.interests)return'interests';if(!t.pace)return'pace';return null}
   function questionFor(field,t=trip){if(field==='destination_dates'){if(!validDestination(t.destination)&&t.start_date&&t.end_date)return `I’ve got your dates, ${fmtDate(t.start_date)} to ${fmtDate(t.end_date)}. Which destination would you like to visit?`;if(!validDestination(t.destination))return `Where would you like to go${t.duration_days?` for your ${t.duration_days}-day trip`:''}, and what are your travel dates? (DD MMM YYYY)`;if(!t.start_date&&!t.end_date)return `What are the start and return dates for your trip to ${t.destination}?${t.duration_days?` (about ${t.duration_days} days)`:``} Please give both dates (DD MMM YYYY).`;if(!t.start_date)return `What start date should I use for ${t.destination}? (DD MMM YYYY)`;if(!t.end_date)return `What return date should I use for ${t.destination}? (DD MMM YYYY)`;return `What are your start and return dates for ${t.destination}? (DD MMM YYYY)`}return({budget_inr:`What budget should I plan within, in ${displayCurrency.symbol||'₹'} (${displayCurrency.code||'INR'})?`,travellers_type:'Who’s travelling?',interests:'What do you enjoy—nature, food, temples, beaches, or something else?',pace:'What pace feels right?',interests_pace:'What do you enjoy, and what pace feels right—relaxed, normal, or packed?'})[field]||'What else should I know to plan this trip?'}
@@ -275,20 +292,20 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     const key=(String(title||'')+' '+String(alt||'')).toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
     const matches=[
       {terms:['adalaj stepwell'],file:'Adalaj Stepwell-Adalaj Ahmedabad-Gujarat-IMG 1021.jpg'},
-      {terms:['calico museum','museum of textiles'],file:'Calico Museum of Textiles, Ahmedabad, 1952.jpg'},
+      {terms:['calico museum','museum of textiles'],file:'Calico Museum of Textiles, Ahmedabad, 1952.jpg',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a7/Calico_Museum_of_Textiles%2C_Ahmedabad%2C_1952.jpg/640px-Calico_Museum_of_Textiles%2C_Ahmedabad%2C_1952.jpg'},
       {terms:['dada harir stepwell'],file:'Dada Harir Stepwell -Ahmedabad -Gujarat -DSC001.jpg'},
       {terms:['kankaria lake','kankariya lake'],file:'Kankaria Lake, Ahmedabad.jpg'},
       {terms:['manek chowk'],file:'Manek Chowk (Ahmedabad) 01.jpg'},
       {terms:['sabarmati ashram'],file:'Sabarmati Ashram Ahmedabad.jpg'},
       {terms:['sarkhej roza'],file:'Sarkhej Roza, Ahmedabad, Gujarat.jpg'},
-      {terms:['sidi saiyyed mosque','sidi sayyed mosque'],file:'Sidi Saiyyed Mosque, Ahmedabad.jpg'},
+      {terms:['sidi saiyyed mosque','sidi sayyed mosque'],file:'Sidi Saiyyed Mosque, Ahmedabad.jpg',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e4/Sidi_Saiyyed_Mosque_Ahmedabad.jpg/640px-Sidi_Saiyyed_Mosque_Ahmedabad.jpg'},
       {terms:['gujarati thali','gujarati cuisine'],file:'Authentic gujarati thali.jpg'},
       {terms:['fafda jalebi','jalebi fafda','jalebi and fafda','fafda'],file:'Jalebi and Fafda.jpg'},
       {terms:['khaman dhokla','dhokla'],file:'Gujarati Dhokla.jpg'},
       {terms:['maska bun','bun maska','maska and chai','tea in india'],file:'BunMaska.png'}
     ];
     const item=matches.find(entry=>entry.terms.some(term=>key.includes(term)));
-    return item?'https://commons.wikimedia.org/wiki/Special:FilePath/'+encodeURIComponent(item.file)+'?width=640':'';
+    return item?.url||(item?'https://commons.wikimedia.org/wiki/Special:FilePath/'+encodeURIComponent(item.file)+'?width=640':'');
   }
   async function loadWikiImages(root){
     const images=[...root.querySelectorAll('[data-wiki-photo]')];
@@ -320,18 +337,16 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
       });
       const localPhoto=localGalleryPhotoFor(img,wikiTitle);
       const knownPhoto=knownPlacePhoto(wikiTitle,img.alt);
-      const options=[];
-      if(localPhoto)options.push([localPhoto,'Trip Assistant']);
-      if(primary)options.push([primary,String(img.dataset.photoCredit||'Wikipedia')]);
-      if(knownPhoto)options.push([knownPhoto,'Wikimedia Commons']);
-      if(wikiTitle){
-        const wiki=await wikiThumbnail(wikiTitle);
-        if(wiki)options.push([wiki,'Wikipedia']);
-        const commons=await commonsThumbnail(wikiTitle);
-        if(commons)options.push([commons,'Wikimedia Commons']);
-      }
+      const immediateOptions=[];
+      if(knownPhoto)immediateOptions.push([knownPhoto,'Wikimedia Commons']);
+      if(localPhoto)immediateOptions.push([localPhoto,'Trip Assistant']);
+      if(primary)immediateOptions.push([primary,String(img.dataset.photoCredit||'Wikipedia')]);
       const seen=new Set();let loaded=false;
-      for(const [url,label] of options){if(seen.has(url))continue;seen.add(url);if(await tryImage(url,label)){loaded=true;break}}
+      for(const [url,label] of immediateOptions){if(seen.has(url))continue;seen.add(url);if(await tryImage(url,label)){loaded=true;break}}
+      if(!loaded&&wikiTitle){
+        const [wiki,commons]=await Promise.all([wikiThumbnail(wikiTitle),commonsThumbnail(wikiTitle)]);
+        for(const [url,label] of [[wiki,'Wikipedia'],[commons,'Wikimedia Commons']]){if(!url||seen.has(url))continue;seen.add(url);if(await tryImage(url,label)){loaded=true;break}}
+      }
       if(!loaded&&img.isConnected)showUnavailable();
     }));
   }
