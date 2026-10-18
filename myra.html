@@ -286,25 +286,25 @@ function applyDestinationCurrency(destination){const saved=readSavedCurrency(),l
     const candidates=[...(data[cityKey].tour||[]),...(data[cityKey].holiday||[]),...(data[cityKey].food||[])];
     const terms=[wikiTitle,String(img.alt||'').replace(/^(?:place|food) photo:\s*/i,'')].map(normalize).filter(Boolean);
     const found=candidates.find(item=>{const caption=normalize(item.caption);return caption&&terms.some(term=>term===caption||term.includes(caption)||caption.includes(term))});
-    if(!found)return [];
     const matched=candidates.filter(item=>{const caption=normalize(item.caption);return caption&&terms.some(term=>term===caption||term.includes(caption)||caption.includes(term))});
-    return [...new Set(matched.map(item=>item.src).filter(Boolean))];
+    const base=siteContext.assetBaseUrl||document.referrer||location.href;
+    return [...new Set(matched.map(item=>{try{return new URL(item.src,base).href}catch{return item.src}}).filter(Boolean))];
   }
   function knownPlacePhoto(title,alt){
     const key=(String(title||'')+' '+String(alt||'')).toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
     const matches=[
-      {terms:['adalaj stepwell'],file:'Adalaj Stepwell-Adalaj Ahmedabad-Gujarat-IMG 1021.jpg'},
+      {terms:['adalaj stepwell'],file:'Adalaj Stepwell-Adalaj Ahmedabad-Gujarat-IMG 1021.jpg',url:'/assets/destination-galleries/ahmedabad-holiday-01.jpg'},
       {terms:['calico museum','museum of textiles'],file:'Calico Museum of Textiles, Ahmedabad, 1952.jpg',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a7/Calico_Museum_of_Textiles%2C_Ahmedabad%2C_1952.jpg/960px-Calico_Museum_of_Textiles%2C_Ahmedabad%2C_1952.jpg'},
       {terms:['dada harir stepwell'],file:'Dada Harir Stepwell -Ahmedabad -Gujarat -DSC001.jpg'},
-      {terms:['kankaria lake','kankariya lake'],file:'Kankaria Lake, Ahmedabad.jpg'},
+      {terms:['kankaria lake','kankariya lake'],file:'Kankaria Lake, Ahmedabad.jpg',url:'/assets/destination-galleries/ahmedabad-holiday-04.jpg'},
       {terms:['manek chowk'],file:'Manek Chowk (Ahmedabad) 01.jpg'},
-      {terms:['sabarmati ashram'],file:'Sabarmati Ashram Ahmedabad.jpg'},
+      {terms:['sabarmati ashram'],file:'Sabarmati Ashram Ahmedabad.jpg',url:'/assets/destination-galleries/ahmedabad-holiday-03.jpg'},
       {terms:['sarkhej roza'],file:'Sarkhej Roza, Ahmedabad, Gujarat.jpg'},
-      {terms:['sidi saiyyed mosque','sidi sayyed mosque'],file:'Sidi Saiyyed Mosque Ahmedabad.jpg',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e4/Sidi_Saiyyed_Mosque_Ahmedabad.jpg/960px-Sidi_Saiyyed_Mosque_Ahmedabad.jpg'},
-      {terms:['gujarati thali','gujarati cuisine'],file:'Authentic gujarati thali.jpg'},
-      {terms:['fafda jalebi','jalebi fafda','jalebi and fafda','fafda'],file:'Jalebi and Fafda.jpg'},
-      {terms:['khaman dhokla','dhokla'],file:'Gujarati Dhokla.jpg'},
-      {terms:['maska bun','bun maska','maska and chai','tea in india'],file:'BunMaska.png'}
+      {terms:['sidi saiyyed mosque','sidi sayyed mosque'],file:'Sidi Saiyyed Mosque Ahmedabad.jpg',url:'/assets/destination-galleries/ahmedabad-tour-01.jpg'},
+      {terms:['gujarati thali','gujarati cuisine'],file:'Authentic gujarati thali.jpg',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/1/19/Authentic_gujarati_thali.jpg/960px-Authentic_gujarati_thali.jpg'},
+      {terms:['fafda jalebi','jalebi fafda','jalebi and fafda','fafda'],file:'Jalebi and Fafda.jpg',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/3/33/Jalebi_and_Fafda.jpg/500px-Jalebi_and_Fafda.jpg'},
+      {terms:['khaman dhokla','dhokla'],file:'Gujarati Dhokla.jpg',url:'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Gujarati_Dhokla.jpg/960px-Gujarati_Dhokla.jpg'},
+      {terms:['maska bun','bun maska','maska and chai','tea in india'],file:'BunMaska.png',url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/aa/BunMaska.png/550px-BunMaska.png'}
     ];
     const item=matches.find(entry=>entry.terms.some(term=>key.includes(term)));
     return item?.url||(item?'https://commons.wikimedia.org/wiki/Special:FilePath/'+encodeURIComponent(item.file)+'?width=640':'');
@@ -332,7 +332,7 @@ function applyDestinationCurrency(destination){const saved=readSavedCurrency(),l
         let settled=false;
         const finish=ok=>{if(settled)return;settled=true;clearTimeout(timer);resolve(ok)};
         const probe=new Image();
-        const timer=setTimeout(()=>finish(false),7000);
+        const timer=setTimeout(()=>finish(false),3000);
         probe.onload=()=>{if(!img.isConnected){finish(false);return}img.src=url;showImage(url,label);finish(true)};
         probe.onerror=()=>finish(false);
         probe.src=url;
@@ -340,8 +340,8 @@ function applyDestinationCurrency(destination){const saved=readSavedCurrency(),l
       const localPhotos=localGalleryPhotoFor(img,wikiTitle);
       const knownPhoto=knownPlacePhoto(wikiTitle,img.alt);
       const immediateOptions=[];
-      if(knownPhoto)immediateOptions.push([knownPhoto,'Wikimedia Commons']);
       for(const localPhoto of localPhotos)immediateOptions.push([localPhoto,'Trip Assistant']);
+      if(knownPhoto)immediateOptions.push([knownPhoto,'Wikimedia Commons']);
       if(primary)immediateOptions.push([primary,String(img.dataset.photoCredit||'Wikipedia')]);
       const seen=new Set();let loaded=false;
       for(const [url,label] of immediateOptions){if(seen.has(url))continue;seen.add(url);if(await tryImage(url,label)){loaded=true;break}}
