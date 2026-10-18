@@ -651,6 +651,17 @@ Deno.serve(async (req) => {
           return json({ ok: false, catalogue_missing: true, reply, error: reply });
         }
       }
+      // Hydrate catalogue place images server-side so the embedded chat does not
+      // depend on cross-origin Wikipedia API access in the user's browser.
+      const photoTitles = places.filter((place: any) => !place.photo_url && place.wiki_title).map((place: any) => String(place.wiki_title));
+      if (photoTitles.length) {
+        const photoPages = await lookupTitles(photoTitles);
+        places = places.map((place: any) => {
+          if (place.photo_url || !place.wiki_title) return place;
+          const page = photoPages.get(String(place.wiki_title).replace(/_/g, ' ').toLowerCase());
+          return page?.photo ? { ...place, photo_url: page.photo, photo_credit: place.photo_credit || 'Wikipedia' } : place;
+        });
+      }
       const allowanceStay = !catalogue.length;
       const suitable = catalogue.filter((hotel: any) => !family || hotel.tags?.includes('family-friendly'));
       // Never invent a stay: destinations without a catalogue listing get an
