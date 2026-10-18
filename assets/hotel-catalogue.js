@@ -387,10 +387,11 @@ export const HOTELS = [
     "lng": 77.5946,
     "address": "UB City, Bengaluru",
     "photos": [
-      "https://images.pexels.com/photos/33803734/pexels-photo-33803734.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/3460599/pexels-photo-3460599.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/35868885/pexels-photo-35868885.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop",
-      "https://images.pexels.com/photos/36009039/pexels-photo-36009039.jpeg?auto=compress&cs=tinysrgb&w=1200&h=800&fit=crop"
+      "assets/web-hotel-06.jpg",
+      "assets/hotel-exclusive-040.jpg",
+      "assets/hotel-exclusive-046.jpg",
+      "assets/hotel-exclusive-047.jpg",
+      "assets/hotel-exclusive-055.jpg"
     ]
   },
   {
