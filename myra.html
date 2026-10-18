@@ -279,7 +279,7 @@ function applyDestinationCurrency(destination){const saved=readSavedCurrency(),l
     commonsImageCache.set(title,task);return task;
   }
   function localGalleryPhotoFor(img,wikiTitle){
-    const data=siteContext.destinationGallery||{};
+    let data=siteContext.destinationGallery||{};if(!Object.keys(data).length){try{data=parent.DESTINATION_GALLERY_DATA||data}catch{}}
     const cityName=String(trip.destination||siteContext.to||'').split(',')[0].trim().toLowerCase();
     const cityKey=Object.keys(data).find(key=>key.toLowerCase()===cityName||key.toLowerCase().replace(/[^a-z0-9]/g,'')===cityName.replace(/[^a-z0-9]/g,''));
     if(!cityKey)return '';
@@ -440,6 +440,7 @@ function applyDestinationCurrency(destination){const saved=readSavedCurrency(),l
   function isTripPlanningRequest(text){return /\b(?:itinerary|itineraries|itertary|iternary|itenerary|itinery|trip\s+plan|plan\b.{0,80}\btrip\b|\bplan\b.{0,80}\b\d{1,2}\s*[- ]?days?\b|(?:make|create|build|draft)\b.{0,80}\b(?:itinerary|itertary|iternary|itenerary|itinery|trip|holiday|vacation)\b|\d{1,2}\s*[- ]?day\s+(?:trip|holiday|vacation))\b/i.test(String(text||''))}
   async function makePlan(changeRequest=''){
     if(planGenerating)return;
+    if(!validDestination(trip.destination)){const recovered=recoverDestinationFromHistory();if(recovered)trip.destination=recovered;}
     const missing=firstMissing(trip);if(missing){nextQuestion=missing;planConversationActive=true;add('answer',`<p>${esc(questionFor(missing))}</p>`);return;}
     planGenerating=true;
     const typing=add('plan-progress','<span class="plan-progress-mark" aria-hidden="true">✦</span><div role="status" aria-live="polite"><strong>Putting your trip together<span class="plan-progress-dots" aria-hidden="true"></span></strong><p>Using your dates, budget and travel style to shape each day.</p></div>');
