@@ -259,9 +259,9 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     const cityName=String(trip.destination||siteContext.to||'').split(',')[0].trim().toLowerCase();
     const cityKey=Object.keys(data).find(key=>key.toLowerCase()===cityName||key.toLowerCase().replace(/[^a-z0-9]/g,'')===cityName.replace(/[^a-z0-9]/g,''));
     if(!cityKey)return '';
-    const normalize=value=>String(value||'').toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim().replace(/\\s+/g,' ');
+    const normalize=value=>String(value||'').toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
     const candidates=[...(data[cityKey].tour||[]),...(data[cityKey].holiday||[])];
-    const terms=[wikiTitle,String(img.alt||'').replace(/^(?:place|food) photo:\\s*/i,'')].map(normalize).filter(Boolean);
+    const terms=[wikiTitle,String(img.alt||'').replace(/^(?:place|food) photo:\s*/i,'')].map(normalize).filter(Boolean);
     const found=candidates.find(item=>{const caption=normalize(item.caption);return caption&&terms.some(term=>term===caption||term.includes(caption)||caption.includes(term))});
     return found?.src||'';
   }
