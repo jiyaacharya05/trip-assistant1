@@ -222,16 +222,46 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     return `<div class="notice" style="margin:12px 0"><b>Why this plan</b><br>${status==='Approved'?esc(localizeInrText(explanation||'')):'Being reviewed by our team'}</div>`;
   }
   function tidyTrip(t){if(!t)return t;const d=String(t.destination||'').replace(/\s+(?:for|with)(?:\s+(?:a|an|the|my|our))?\s*$/i,'').trim();if(d)t.destination=d;const c=Number(t.travellers_count||0);if(t.travellers_type==='couple'&&c<2)t.travellers_count=2;if(t.travellers_type==='family'&&c<3)t.travellers_count=4;if(t.travellers_type==='friends'&&c<2)t.travellers_count=3;return t}
-  const wikiImageCache=new Map();let myraMapSequence=0;
-  function wikiThumbnail(title){if(!title)return Promise.resolve('');if(wikiImageCache.has(title))return wikiImageCache.get(title);const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),7000);const task=fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(String(title).replace(/_/g,' ')),{signal:controller.signal}).then(r=>r.ok?r.json():null).then(d=>d?.thumbnail?.source||'').catch(()=> '').finally(()=>clearTimeout(timeout));wikiImageCache.set(title,task);return task}
+  const wikiImageCache=new Map(),commonsImageCache=new Map();let myraMapSequence=0;
+  function timedJson(url,ms=6500){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),ms);
+    return fetch(url,{signal:controller.signal}).then(r=>r.ok?r.json():null).catch(()=>null).finally(()=>clearTimeout(timer));
+  }
+  function wikiThumbnail(title){
+    if(!title)return Promise.resolve('');
+    if(wikiImageCache.has(title))return wikiImageCache.get(title);
+    const task=(async()=>{
+      const page=encodeURIComponent(String(title).replace(/_/g,' '));
+      const summary=await timedJson('https://en.wikipedia.org/api/rest_v1/page/summary/'+page);
+      if(summary?.thumbnail?.source)return summary.thumbnail.source;
+      const url='https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=640&titles='+page;
+      const data=await timedJson(url);
+      return Object.values(data?.query?.pages||{}).find(p=>p?.thumbnail?.source)?.thumbnail?.source||'';
+    })();
+    wikiImageCache.set(title,task);return task;
+  }
+  function commonsThumbnail(title){
+    if(!title)return Promise.resolve('');
+    if(commonsImageCache.has(title))return commonsImageCache.get(title);
+    const task=(async()=>{
+      const url='https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=8&gsrsearch='+encodeURIComponent(String(title).replace(/_/g,' '))+'&prop=imageinfo&iiprop=url&iiurlwidth=640';
+      const data=await timedJson(url);
+      const tokens=String(title).toLowerCase().replace(/_/g,' ').split(/[^a-z0-9]+/).filter(x=>x.length>2);
+      const candidates=Object.values(data?.query?.pages||{}).map(p=>({name:String(p?.title||'').toLowerCase(),url:p?.imageinfo?.[0]?.thumburl||p?.imageinfo?.[0]?.url||''})).filter(x=>x.url);
+      candidates.sort((a,b)=>tokens.filter(t=>a.name.includes(t)).length-tokens.filter(t=>b.name.includes(t)).length).reverse();
+      const best=candidates[0];
+      return best&&tokens.some(t=>best.name.includes(t))?best.url:'';
+    })();
+    commonsImageCache.set(title,task);return task;
+  }
   function localGalleryPhotoFor(img,wikiTitle){
     const data=siteContext.destinationGallery||{};
     const cityName=String(trip.destination||siteContext.to||'').split(',')[0].trim().toLowerCase();
     const cityKey=Object.keys(data).find(key=>key.toLowerCase()===cityName||key.toLowerCase().replace(/[^a-z0-9]/g,'')===cityName.replace(/[^a-z0-9]/g,''));
     if(!cityKey)return '';
-    const normalize=value=>String(value||'').toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+    const normalize=value=>String(value||'').toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim().replace(/\\s+/g,' ');
     const candidates=[...(data[cityKey].tour||[]),...(data[cityKey].holiday||[])];
-    const terms=[wikiTitle,String(img.alt||'').replace(/^(?:place|food) photo:\s*/i,'')].map(normalize).filter(Boolean);
+    const terms=[wikiTitle,String(img.alt||'').replace(/^(?:place|food) photo:\\s*/i,'')].map(normalize).filter(Boolean);
     const found=candidates.find(item=>{const caption=normalize(item.caption);return caption&&terms.some(term=>term===caption||term.includes(caption)||caption.includes(term))});
     return found?.src||'';
   }
@@ -244,7 +274,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
       const credit=img.closest('.myra-photo-column')?.querySelector('.wiki-credit');
       const wikiTitle=String(img.dataset.wikiPhoto||'').trim();
       const primary=String(img.dataset.photoUrl||'').trim();
-      if(wikiTitle&&placeholder){placeholder.textContent='Loading photo…';placeholder.hidden=false}
+      if(placeholder){placeholder.textContent='Loading photo…';placeholder.hidden=false}
       const showUnavailable=()=>{img.hidden=true;if(placeholder){placeholder.textContent='Photo unavailable for this exact place';placeholder.hidden=false}if(credit)credit.hidden=true};
       const showImage=(url,label)=>{
         img.hidden=false;if(placeholder)placeholder.hidden=true;
@@ -255,16 +285,26 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
       };
       const tryImage=(url,label)=>new Promise(resolve=>{
         if(!url){resolve(false);return}
+        let settled=false;
+        const finish=ok=>{if(settled)return;settled=true;clearTimeout(timer);resolve(ok)};
         const probe=new Image();
-        probe.onload=()=>{if(!img.isConnected){resolve(false);return}img.src=url;showImage(url,label);resolve(true)};
-        probe.onerror=()=>resolve(false);
+        const timer=setTimeout(()=>finish(false),7000);
+        probe.onload=()=>{if(!img.isConnected){finish(false);return}img.src=url;showImage(url,label);finish(true)};
+        probe.onerror=()=>finish(false);
         probe.src=url;
       });
-      // Prefer a same-city curated attraction image; then try the supplied exact photo and Wikipedia.
       const localPhoto=localGalleryPhotoFor(img,wikiTitle);
-      let loaded=localPhoto?await tryImage(localPhoto,'Trip Assistant'):false;
-      if(!loaded)loaded=await tryImage(primary,String(img.dataset.photoCredit||'Wikipedia'));
-      if(!loaded&&wikiTitle){const fallback=await wikiThumbnail(wikiTitle);if(fallback&&fallback!==primary&&fallback!==localPhoto)loaded=await tryImage(fallback,'Wikipedia')}
+      const options=[];
+      if(localPhoto)options.push([localPhoto,'Trip Assistant']);
+      if(primary)options.push([primary,String(img.dataset.photoCredit||'Wikipedia')]);
+      if(wikiTitle){
+        const wiki=await wikiThumbnail(wikiTitle);
+        if(wiki)options.push([wiki,'Wikipedia']);
+        const commons=await commonsThumbnail(wikiTitle);
+        if(commons)options.push([commons,'Wikimedia Commons']);
+      }
+      const seen=new Set();let loaded=false;
+      for(const [url,label] of options){if(seen.has(url))continue;seen.add(url);if(await tryImage(url,label)){loaded=true;break}}
       if(!loaded&&img.isConnected)showUnavailable();
     }));
   }
