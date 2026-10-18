@@ -812,13 +812,30 @@ const tourAttractionTitles={
   hyderabad:['Birla mandir.jpg','Charminar-Hyderabad-Telangana-001.jpg','Chowmahalla NIZAM.jpg','Golconda Fort situated at Hyderabad.jpg'],
   chennai:['Chennai Lighthouse.jpg','Vivekananda-House-Chennai-India.jpg','Fort St. George, Chennai.jpg','Santhome Church.JPG'],
   kolkata:['Birla Planetarium, Kolkata.jpg','Marble Palace- Kolkata- West Bengal- DSC 0006.jpg','Indian Museum in Kolkata, India.jpg','Dakshineswar Kali Temple, Dakshineswar, Kolkata, West Bengal, India (2017).jpg'],
-  ahmedabad:['Sidi Saiyyed Mosque, Ahmedabad.jpg','Sabarmati Riverfront Ahmedabad.jpg','Kankaria Lake, Ahmedabad.jpg','River front ahmedabad.jpg'],
+  ahmedabad:['Sidi Saiyyed Mosque, Ahmedabad.jpg','Sabarmati Riverfront Ahmedabad.jpg','Kankaria Lake, Ahmedabad.jpg','River front ahmedabad.jpg','Adalaj Stepwell-Adalaj Ahmedabad-Gujarat-IMG 1021.jpg','Dada Harir Stepwell -Ahmedabad -Gujarat -DSC001.jpg','Calico Museum of Textiles, Ahmedabad, 1952.jpg','Manek Chowk (Ahmedabad) 01.jpg','Sarkhej Roza, Ahmedabad, Gujarat.jpg'],
   sydney:['Bondi Beach Sydney.jpg','Sydney Opera House from Circular Quay.jpg','Sydney from Taronga Zoo.jpg','Royal Botanic Gardens with the Sydney skyline in the background.jpg'],
   kerala:['Alleppey Backwaters, Kerala, India.jpg','Munnar tea gardens.jpg','Kerala Backwaters in Kochi.jpg','Athirappilly waterfall, Kerala.jpg'],
   kochi:['Chinese fishing nets at Fort Kochi.jpg','Mattancherry Palace 2025.jpg','St.Francis-Church-Fort-Kochi.jpg','Kerala Folklore Museum in Kochi.jpg','The Hill Palace Museum.jpg','Paradesi Synagogue, Kochi, Kerala 034.jpg','Fort Kochi beach, Kochi ,2026-09-07.jpg','Marine drive kochi.jpg','Cherai Beach Kerala.jpg','Bolgatty Palace.jpg']
 };
 const tourPhotos=Object.fromEntries(Object.entries(tourAttractionTitles).map(([city,titles])=>[city,[...new Map(titles.map(title=>{const photo={title,url:holidayPhotoUrl(title),source:holidayPhotoSource(title)};return [photo.url,photo]})).values()]]));
 for(const [city,sections] of Object.entries(window.DESTINATION_GALLERY_DATA||{})){if(sections.tour?.length)tourPhotos[city]=sections.tour.map(photo=>({title:photo.caption,url:new URL(photo.src,document.baseURI).href,source:photo.source||''}));}
+/* Share the site's own destination galleries with Myra so place cards can use
+   the same relevant pictures instead of relying only on browser-side lookups. */
+const myraFoodPhotoFiles={ahmedabad:['Jalebi and Fafda.jpg','Authentic gujarati thali.jpg','Gujarati Dhokla.jpg','BunMaska.png']};
+const existingMyraGallery=window.DESTINATION_GALLERY_DATA||{};
+const myraGalleryCities=[...new Set([...Object.keys(tourPhotos),...Object.keys(holidayCuratedPhotos),...Object.keys(myraFoodPhotoFiles),...Object.keys(existingMyraGallery)])];
+window.DESTINATION_GALLERY_DATA=Object.fromEntries(myraGalleryCities.map(city=>{
+  const existing=existingMyraGallery[city]||{};
+  const mapPhotos=photos=>(photos||[]).map(photo=>({caption:photo.caption||photo.title||'',src:photo.src||photo.url||'',source:photo.source||''}));
+  const foods=(myraFoodPhotoFiles[city]||[]).map(file=>({caption:file.replace(/\\.[^.]+$/,''),src:holidayPhotoUrl(file),source:holidayPhotoSource(file)}));
+  return [city,{
+    ...existing,
+    tour:existing.tour?.length?mapPhotos(existing.tour):mapPhotos(tourPhotos[city]),
+    holiday:existing.holiday?.length?mapPhotos(existing.holiday):mapPhotos(holidayCuratedPhotos[city]),
+    food:existing.food?.length?mapPhotos(existing.food):foods
+  }];
+}));
+
 const catalogBeforeTourAttractions=buildCatalog;
 buildCatalog=function(category,searchState){
   const results=catalogBeforeTourAttractions(category,searchState);
