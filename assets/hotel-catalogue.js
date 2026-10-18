@@ -387,7 +387,7 @@ export const HOTELS = [
     "lng": 77.5946,
     "address": "UB City, Bengaluru",
     "photos": [
-      "assets/web-hotel-06.jpg",
+      "assets/hotel-curated-01.jpg",
       "assets/hotel-exclusive-040.jpg",
       "assets/hotel-exclusive-046.jpg",
       "assets/hotel-exclusive-047.jpg",
