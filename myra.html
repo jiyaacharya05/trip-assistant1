@@ -265,6 +265,16 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
     const found=candidates.find(item=>{const caption=normalize(item.caption);return caption&&terms.some(term=>term===caption||term.includes(caption)||caption.includes(term))});
     return found?.src||'';
   }
+  function knownPlacePhoto(title,alt){
+    const key=(String(title||'')+' '+String(alt||'')).toLowerCase().replace(/_/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
+    const matches=[
+      {terms:['calico museum','museum of textiles'],file:'Calico Museum of Textiles, Ahmedabad, 1952.jpg'},
+      {terms:['maska bun','bun maska','maska and chai'],file:'BunMaska.png'},
+      {terms:['fafda jalebi','jalebi fafda','jalebi and fafda'],file:'Jalebi and Fafda.jpg'}
+    ];
+    const item=matches.find(entry=>entry.terms.some(term=>key.includes(term)));
+    return item?'https://commons.wikimedia.org/wiki/Special:FilePath/'+encodeURIComponent(item.file)+'?width=640':'';
+  }
   async function loadWikiImages(root){
     const images=[...root.querySelectorAll('[data-wiki-photo]')];
     await Promise.all(images.map(async img=>{
@@ -280,7 +290,7 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
         img.hidden=false;if(placeholder)placeholder.hidden=true;
         if(!credit)return;
         credit.replaceChildren();
-        credit.textContent=label==='Wikipedia'?'Photo: Wikipedia':label==='Trip Assistant'?'Photo: Trip Assistant destination gallery':(label?'Photo: Wikimedia Commons · '+label:'');
+        credit.textContent=label==='Wikipedia'?'Photo: Wikipedia':label==='Trip Assistant'?'Photo: Trip Assistant destination gallery':label==='Wikimedia Commons'?'Photo: Wikimedia Commons':(label?'Photo: Wikimedia Commons · '+label:'');
         credit.hidden=!credit.textContent;
       };
       const tryImage=(url,label)=>new Promise(resolve=>{
@@ -294,9 +304,11 @@ travelAnswer=function(query,data){const p=data.payload||{},from=p.from||context.
         probe.src=url;
       });
       const localPhoto=localGalleryPhotoFor(img,wikiTitle);
+      const knownPhoto=knownPlacePhoto(wikiTitle,img.alt);
       const options=[];
       if(localPhoto)options.push([localPhoto,'Trip Assistant']);
       if(primary)options.push([primary,String(img.dataset.photoCredit||'Wikipedia')]);
+      if(knownPhoto)options.push([knownPhoto,'Wikimedia Commons']);
       if(wikiTitle){
         const wiki=await wikiThumbnail(wikiTitle);
         if(wiki)options.push([wiki,'Wikipedia']);
